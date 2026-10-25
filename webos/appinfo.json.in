@@ -1,0 +1,15 @@
+{
+    "id": "@AC_APP_ID@",
+    "version": "@PROJECT_VERSION@",
+    "vendor": "Animal Crossing webOS port",
+    "type": "native",
+    "main": "bin/AnimalCrossing",
+    "title": "Animal Crossing",
+    "icon": "icon.png",
+    "largeIcon": "largeIcon.png",
+    "iconColor": "#3f8f3a",
+    "appDescription": "Native port of the Animal Crossing decompilation. Bring your own disc image.",
+    "supportTouchMode": "none",
+    "useAllMouseButtons": false,
+    "requiredACG": []
+}

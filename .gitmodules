@@ -1,0 +1,3 @@
+[submodule "external/ACGC-Android-Port"]
+	path = external/ACGC-Android-Port
+	url = https://github.com/zwaetschge/ACGC-Android-Port
