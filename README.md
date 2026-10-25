@@ -6,9 +6,8 @@ A native LG webOS TV build of the Animal Crossing (GameCube) decompilation,
 running on the TV's own GPU through OpenGL ES 3. You need your own copy of the
 game: no game data is included.
 
-> **Status: early.** Version 0.1.0 compiles and packages for the TV; it has
-> not been played on a TV yet. The file-transfer page, remote control mapping
-> and TV menu are still to come (see [Roadmap](#roadmap)).
+> **Status: early.** The game boots and runs on webOS 6. The file-transfer
+> page and USB support are still to come (see [Roadmap](#roadmap)).
 
 ## How it works
 
@@ -20,8 +19,11 @@ renderer path) for webOS, with a small webOS layer in `src/webos/`:
 
 | File | What it does |
 |---|---|
-| `webos_glue.c` | Picks the data folder, creates `rom/`, `save/`, `texture_pack/`, links the shaders, writes logs; rewrites the desktop GLSL 3.30 shaders to GLSL ES 3.00 before compiling them |
-| `glad/gl.h` | Replaces the desktop GL loader: maps the few desktop-only GL calls to ES ones |
+| `webos_glue.c` | Picks the data folder, creates `rom/`, `save/`, `texture_pack/`, links the shaders, writes logs, logs crashes |
+| `webos_present.c` | Makes each frame opaque before it is shown (the game writes alpha, which the TV's compositor would otherwise blend away), and shows an activity bar while shaders compile on first launch |
+| `webos_shader_cache.c` | Rewrites the desktop GLSL 3.30 shaders to GLSL ES 3.00, and caches linked shader programs in `shader_binaries/`: the first launch compiles them (about 30 s), later launches load them in well under a second |
+| `webos_remote.c` | TV remote controls (below); Back opens the pause menu instead of closing the app |
+| `glad/gl.h` | Replaces the desktop GL loader: maps the few desktop-only GL calls to ES ones and routes shader calls and buffer swaps to the files above |
 | `webos_forced_decls.h`, `webos_bstring.c` | Reconcile the decomp's own libc declarations with the TV's glibc |
 | `cmake/GlesLinkStub.cmake` | The toolchain only ships OpenGL ES 2 libraries; the game links against a stub with the ES 3 entry points and uses the TV's real driver at run time |
 
@@ -47,8 +49,26 @@ frame in about 16 ms at 1080p.
    ```
 
 3. Until the transfer page exists, copy the disc image over SSH (rooted TV).
-   Find the folder with `find / -name stdout.log -path "*animalcrossing*" 2>/dev/null`,
-   then `scp GAFE01.iso root@<tv>:<that folder>/rom/`.
+   On a developer-mode install the folder is
+   `/media/developer/apps/usr/palm/applications/org.animalcrossingwebos.app/data`:
+   `scp GAFE01.iso root@<tv>:<that folder>/rom/`.
+
+## Controls
+
+A game controller works as on the PC port (left stick walks, right stick is
+the camera, Back/Select opens the pause menu). The TV remote, held normally:
+
+| Remote | GameCube | | Remote | GameCube |
+|---|---|---|---|---|
+| Arrows | Walk (control stick) | | 0, Play | Start |
+| OK, green | A | | 5 | Z |
+| Red | B | | CH − / CH + | L / R |
+| Blue | X | | 2 / 8 / 4 / 6 | Camera (C-stick) |
+| Yellow | Y | | Back, Exit | Pause menu |
+
+A keyboard uses the PC port's layout, except the camera (T/F/G/H) and Start
+(P), whose PC keys the remote sends. The layout is written to
+`keybindings.ini` on first launch; edit it there if you like.
 
 ## Building
 
@@ -70,8 +90,7 @@ downloads the SDL-webOS release it bundles.
 
 - Transfer page in the browser (upload the disc image and saves), on its own port
 - USB drive support: report free space, load `Animal Crossing/texture_pack/` from it
-- TV remote mapping and a light Back menu (a game controller is recommended)
-- Shader cache on disk, internal resolution setting, CPU load check
+- Internal resolution setting, CPU load check
 
 ## Credits
 

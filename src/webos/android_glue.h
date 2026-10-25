@@ -11,8 +11,6 @@
 #ifndef ACWEBOS_ANDROID_GLUE_H
 #define ACWEBOS_ANDROID_GLUE_H
 
-#include <GLES3/gl3.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,9 +21,6 @@ extern "C" {
  * resolve there, creates those folders, and sends logs to files.
  */
 void android_bootstrap(void);
-
-/** glShaderSource with the desktop GLSL 3.30 -> GLSL ES 3.00 rewrite applied. */
-int ac_glShaderSource(GLuint shader, GLsizei count, const GLchar *const *string, const GLint *length);
 
 #ifdef __cplusplus
 }

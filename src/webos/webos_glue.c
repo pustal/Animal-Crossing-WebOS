@@ -3,16 +3,17 @@
  * @brief webOS platform hooks for the Animal Crossing PC port (see android_glue.h).
  *
  * - android_bootstrap(): picks the data folder, creates the port's folders,
- *   links shaders/ to the copy shipped in the app, and redirects logs.
- * - ac_glShaderSource(): rewrites the port's desktop GLSL 3.30 shaders to
- *   GLSL ES 3.00 before compiling them.
+ *   links shaders/ to the copy shipped in the app, redirects logs, installs a
+ *   crash logger and prepares the remote control (hints, keyboard layout).
  * - The Android touch overlay's input variables, which pc_pad.c reads; a TV
  *   has no touch overlay, so they stay zero.
  */
 #include "android_glue.h"
+#include "webos_platform.h"
 
 #include <errno.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -123,6 +124,28 @@ static void link_shaders(void)
         fprintf(stderr, "[AC/webOS] could not link shaders: %s\n", strerror(errno));
 }
 
+/* ---- Crash logging ---- */
+
+/** Writes which fatal signal arrived to stderr.log, then lets it terminate the app as usual. */
+static void on_fatal_signal(int signal_number)
+{
+    /* Only async-signal-safe calls here: write(), signal(), raise(). */
+    static const char prefix[] = "[AC/webOS] fatal signal ";
+    char number[4] = { (char)('0' + signal_number / 10 % 10), (char)('0' + signal_number % 10), '\n', '\0' };
+    ssize_t ignored = write(STDERR_FILENO, prefix, sizeof(prefix) - 1);
+    ignored = write(STDERR_FILENO, number, 3);
+    (void)ignored;
+    signal(signal_number, SIG_DFL);
+    raise(signal_number);
+}
+
+static void install_crash_logger(void)
+{
+    const int fatal[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT };
+    for (size_t i = 0; i < sizeof(fatal) / sizeof(fatal[0]); ++i)
+        signal(fatal[i], on_fatal_signal);
+}
+
 void android_bootstrap(void)
 {
     const char *base = enter_data_dir();
@@ -141,65 +164,9 @@ void android_bootstrap(void)
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
+    install_crash_logger();
+    webos_remote_set_hints();          /* before pc_main.c calls SDL_Init */
+    webos_write_keybindings_once();    /* before pc_main.c loads keybindings.ini */
+
     printf("[AC/webOS] bootstrap done (cwd=%s)\n", base);
-}
-
-/* ---- GLSL 3.30 -> GLSL ES 3.00 ---- */
-
-/** Header that replaces the "#version 330 core" line. */
-static const char kEsHeader[] = "#version 300 es\n"
-                                "precision highp float;\n"
-                                "precision highp int;\n"
-                                "precision highp sampler2D;\n";
-
-/**
- * Returns a malloc'd copy of @p source with its #version line replaced by
- * kEsHeader (or kEsHeader prepended if there is none).
- */
-static char *rewrite_glsl(const char *source, size_t size)
-{
-    size_t skip = 0;
-    if (size >= 8 && strncmp(source, "#version", 8) == 0) {
-        const char *newline = memchr(source, '\n', size);
-        skip = newline ? (size_t)(newline - source) + 1 : size;
-    }
-
-    const size_t header = sizeof(kEsHeader) - 1;
-    char *out = (char *)malloc(header + (size - skip) + 1);
-    if (!out)
-        return NULL;
-    memcpy(out, kEsHeader, header);
-    memcpy(out + header, source + skip, size - skip);
-    out[header + size - skip] = '\0';
-    return out;
-}
-
-int ac_glShaderSource(GLuint shader, GLsizei count, const GLchar *const *string, const GLint *length)
-{
-    /* Join the pieces first: the #version line must be the very first line of the whole source. */
-    size_t total = 0;
-    for (GLsizei i = 0; i < count; ++i)
-        total += (length && length[i] >= 0) ? (size_t)length[i] : strlen(string[i]);
-
-    char *joined = (char *)malloc(total + 1);
-    if (!joined)
-        return 0;
-    size_t at = 0;
-    for (GLsizei i = 0; i < count; ++i) {
-        const size_t piece = (length && length[i] >= 0) ? (size_t)length[i] : strlen(string[i]);
-        memcpy(joined + at, string[i], piece);
-        at += piece;
-    }
-    joined[total] = '\0';
-
-    /* The port always puts "#version" first, specialised variants included (pc_gx_tev.c). */
-    char *rewritten = rewrite_glsl(joined, total);
-    free(joined);
-    if (!rewritten)
-        return 0;
-
-    const GLchar *sources[1] = { rewritten };
-    glShaderSource(shader, 1, sources, NULL); /* the real function: the macro is not in effect here */
-    free(rewritten);
-    return 1;
 }
