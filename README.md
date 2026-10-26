@@ -6,8 +6,9 @@ A native LG webOS TV build of the Animal Crossing (GameCube) decompilation,
 running on the TV's own GPU through OpenGL ES 3. You need your own copy of the
 game: no game data is included.
 
-> **Status: early.** The game boots and runs on webOS 6, with a browser upload
-> page for the disc image, saves and a texture pack on a USB drive.
+Developed and tested on an LG TV with webOS 6 (Mali-G51). Install it from the
+Homebrew Channel by adding [pustal's repository](https://github.com/pustal/webos-repo),
+or with the `.ipk` from the [releases](https://github.com/pustal/Animal-Crossing-WebOS/releases).
 
 ## How it works
 
@@ -25,7 +26,7 @@ renderer path) for webOS, with a small webOS layer in `src/webos/`:
 | `webos_tev_specialize.c` | Rewrites each of the port's TEV shader variants into straight-line code. The TV's Mali driver does not fold the port's generic shader, which made dialogue screens run at 6-10 fps; `tools/tev_equivalence/run.sh` checks the rewritten shaders render identically |
 | `webos_bc_decode.c` | Lets the texture pack loader use BC1/BC3/BC7 (DXT) packs on a GPU without them: reports the extensions and decodes those uploads to RGBA on the CPU |
 | `webos_gpu_profile.c` | Optional GPU timing mode for finding expensive draws (see Troubleshooting) |
-| `webos_overlay.c` | In-game panel with the upload page address and PIN (remote key 1) |
+| `webos_overlay.c` | In-game panel with the upload page address, PIN and this project's link (remote key 1, controller LB) |
 | `transfer/` | The upload page server (cpp-httplib), setup screen, USB drive and root detection, texture pack placement; the page itself is `web/index.html`. Built as `lib/libacwebos_transfer.so` with its own private C++ runtime, because the game replaces the global `operator new` with its own heap allocator |
 | `webos_remote.c` | TV remote controls (below); Back opens the pause menu instead of closing the app |
 | `glad/gl.h` | Replaces the desktop GL loader: maps the few desktop-only GL calls to ES ones and routes shader calls and buffer swaps to the files above |

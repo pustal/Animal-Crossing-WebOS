@@ -95,6 +95,8 @@ extern "C" int webos_transfer_overlay_text(char *buffer, size_t size)
         text += "\nFiles received: restart the game to use them";
         ++lines;
     }
+    text += "\nHelp and updates: github.com/pustal/Animal-Crossing-WebOS";
+    ++lines;
     text += "\nPress 1 (remote) or LB (controller) to show or hide";
     ++lines;
 
