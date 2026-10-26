@@ -10,9 +10,11 @@
  * cleared to 1 (colour untouched).
  *
  * glad/gl.h routes the port's SDL_GL_SwapWindow call here, which also gives a
- * per-frame hook for installing the remote mapping and for a heartbeat log.
+ * per-frame hook for the remote mapping, the info overlay (webos_overlay.c)
+ * and a heartbeat log.
  */
 #include "webos_platform.h"
+#include "webos_overlay.h"
 
 #include <GLES3/gl3.h>
 #include <SDL.h>
@@ -84,12 +86,17 @@ static void on_first_frame(SDL_Window *window)
     printf("[AC/webOS] first frame: drawable %dx%d, %s / %s\n", width, height,
            (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VERSION));
     webos_remote_install();
+    webos_overlay_show_briefly(); /* upload page address and PIN for the first seconds */
 }
 
 void ac_SDL_GL_SwapWindow(SDL_Window *window)
 {
     if (s_frames_presented == 0)
         on_first_frame(window);
+
+    int drawable_w = 0, drawable_h = 0;
+    SDL_GL_GetDrawableSize(window, &drawable_w, &drawable_h);
+    webos_overlay_draw(drawable_w, drawable_h);
 
     if (webos_gpu_profile_active()) {
         const double opaque_start = webos_gpu_profile_begin();

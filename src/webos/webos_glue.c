@@ -4,13 +4,14 @@
  *
  * - android_bootstrap(): picks the data folder, creates the port's folders,
  *   links shaders/ to the copy shipped in the app, redirects logs, installs a
- *   crash logger, turns on the frame profiler if asked and prepares the
- *   remote control (hints, keyboard layout).
+ *   crash logger, turns on the frame profiler if asked, prepares the remote
+ *   control (hints, keyboard layout) and starts the upload page.
  * - The Android touch overlay's input variables, which pc_pad.c reads; a TV
  *   has no touch overlay, so they stay zero.
  */
 #include "android_glue.h"
 #include "webos_platform.h"
+#include "webos_transfer.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -191,6 +192,7 @@ void android_bootstrap(void)
     webos_gpu_profile_init();          /* before any shader is created */
     webos_remote_set_hints();          /* before pc_main.c calls SDL_Init */
     webos_write_keybindings_once();    /* before pc_main.c loads keybindings.ini */
+    webos_transfer_boot();             /* upload page; waits on the setup screen without a disc image */
 
     printf("[AC/webOS] bootstrap done (cwd=%s)\n", base);
 }

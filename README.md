@@ -6,8 +6,8 @@ A native LG webOS TV build of the Animal Crossing (GameCube) decompilation,
 running on the TV's own GPU through OpenGL ES 3. You need your own copy of the
 game: no game data is included.
 
-> **Status: early.** The game boots and runs on webOS 6. The file-transfer
-> page and USB support are still to come (see [Roadmap](#roadmap)).
+> **Status: early.** The game boots and runs on webOS 6, with a browser upload
+> page for the disc image, saves and a texture pack on a USB drive.
 
 ## How it works
 
@@ -24,6 +24,8 @@ renderer path) for webOS, with a small webOS layer in `src/webos/`:
 | `webos_shader_cache.c` | Rewrites the desktop GLSL 3.30 shaders to GLSL ES 3.00, and caches linked shader programs in `shader_binaries/`: the first launch compiles them (about 30 s), later launches load them in well under a second |
 | `webos_tev_specialize.c` | Rewrites each of the port's TEV shader variants into straight-line code. The TV's Mali driver does not fold the port's generic shader, which made dialogue screens run at 6-10 fps; `tools/tev_equivalence/run.sh` checks the rewritten shaders render identically |
 | `webos_gpu_profile.c` | Optional GPU timing mode for finding expensive draws (see Troubleshooting) |
+| `webos_overlay.c` | In-game panel with the upload page address and PIN (remote key 1) |
+| `transfer/` | The upload page server (cpp-httplib), setup screen, USB drive and root detection, texture pack placement; the page itself is `web/index.html` |
 | `webos_remote.c` | TV remote controls (below); Back opens the pause menu instead of closing the app |
 | `glad/gl.h` | Replaces the desktop GL loader: maps the few desktop-only GL calls to ES ones and routes shader calls and buffer swaps to the files above |
 | `webos_forced_decls.h`, `webos_bstring.c` | Reconcile the decomp's own libc declarations with the TV's glibc |
@@ -39,21 +41,35 @@ frame in about 16 ms at 1080p.
 1. Install `dist/org.animalcrossingwebos.app_<version>_arm.ipk` with
    [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop) or
    `ares-install`.
-2. Start the app once. It creates its data folder (`$HOME/data` of the app)
-   with these subfolders:
+2. Start the app. Without a disc image it shows an address and a PIN: open
+   the address on a phone or computer on the same network, enter the PIN and
+   upload an image of your own disc (US version, GAFE01; `.iso`, `.gcm` or
+   `.ciso`). The game starts as soon as it arrives.
 
-   ```
-   rom/            put GAFE01.iso here (the US disc image)
-   save/card_a/    memory card A (GCI saves)
-   save/card_b/
-   texture_pack/   optional custom textures
-   stdout.log, stderr.log, settings.ini
-   ```
+### The upload page
 
-3. Until the transfer page exists, copy the disc image over SSH (rooted TV).
-   On a developer-mode install the folder is
-   `/media/developer/apps/usr/palm/applications/org.animalcrossingwebos.app/data`:
-   `scp GAFE01.iso root@<tv>:<that folder>/rom/`.
+The page stays available while you play (port 47811; press **1** on the
+remote to see the address and PIN). It only answers devices on your home
+network that send the PIN. It can:
+
+- replace the disc image;
+- download and upload memory-card saves (`.gci`); uploads made while the game
+  runs are applied at the next start;
+- show whether the app has **root** (running as root, or root commands through
+  the Homebrew Channel), and each **USB drive**'s free space and access;
+- create `Animal Crossing/texture_pack` on a USB drive and upload a texture
+  pack folder into it (or into the TV storage). At start-up the game uses a
+  pack on a USB drive automatically (a link, or a root bind mount when the app
+  cannot read the drive itself).
+
+Texture packs must be in a format the TV's GPU can show: **ASTC 4x4** or
+uncompressed DDS. Most Dolphin packs use BC1/BC3/BC7 (DXT), which the Mali GPU
+does not support; the page skips those files. Convert such packs to ASTC first
+(the ACGC Android port has a converter).
+
+The data folder (disc image, saves, settings, logs) is
+`/media/developer/apps/usr/palm/applications/org.animalcrossingwebos.app/data`
+on a developer-mode install. It survives app updates but not uninstalling.
 
 ## Controls
 
@@ -67,6 +83,7 @@ the camera, Back/Select opens the pause menu). The TV remote, held normally:
 | Red | B | | CH − / CH + | L / R |
 | Blue | X | | 2 / 8 / 4 / 6 | Camera (C-stick) |
 | Yellow | Y | | Back, Exit | Pause menu |
+| 1 | Upload page address and PIN | | | |
 
 A keyboard uses the PC port's layout, except the camera (T/F/G/H) and Start
 (P), whose PC keys the remote sends. The layout is written to
@@ -102,9 +119,8 @@ downloads the SDL-webOS release it bundles.
 
 ## Roadmap
 
-- Transfer page in the browser (upload the disc image and saves), on its own port
-- USB drive support: report free space, load `Animal Crossing/texture_pack/` from it
-- Internal resolution setting, CPU load check
+- A texture pack converter (BC to ASTC) that runs on a computer
+- Internal resolution setting
 
 ## Credits
 

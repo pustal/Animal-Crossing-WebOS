@@ -10,7 +10,7 @@
 #   cmake --build build-webos && cmake --build build-webos --target webos-package
 
 cmake_minimum_required(VERSION 3.21)
-project(AnimalCrossingWebOS VERSION 0.1.4 LANGUAGES C CXX)
+project(AnimalCrossingWebOS VERSION 0.2.0 LANGUAGES C CXX)
 
 set(AC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${AC_ROOT}/cmake")
@@ -164,23 +164,60 @@ set_source_files_properties("${DECOMP_ROOT}/pc/src/pc_stubs_cpp.cpp" PROPERTIES 
 # ---------------------------------------------------------------------------
 # The executable
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# The webOS layer (src/webos/): platform glue in C, upload page in C++
+# ---------------------------------------------------------------------------
+set(WEBOS_C_SOURCES
+    src/webos/webos_glue.c
+    src/webos/webos_gpu_profile.c
+    src/webos/webos_overlay.c
+    src/webos/webos_present.c
+    src/webos/webos_remote.c
+    src/webos/webos_shader_cache.c
+    src/webos/webos_tev_specialize.c)
+set(WEBOS_CXX_SOURCES
+    src/webos/transfer/BitmapFont.cpp
+    src/webos/transfer/NetInfo.cpp
+    src/webos/transfer/SetupScreen.cpp
+    src/webos/transfer/Storage.cpp
+    src/webos/transfer/TextRenderer.cpp
+    src/webos/transfer/TransferServer.cpp
+    src/webos/transfer/UsbAccess.cpp
+    src/webos/transfer/webos_transfer.cpp)
+
+# The upload page ships inside the binary.
+set(AC_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_custom_command(
+    OUTPUT "${AC_GENERATED_DIR}/WebPage.generated.h"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${AC_GENERATED_DIR}"
+    COMMAND "${CMAKE_COMMAND}"
+            -DINPUT=${AC_ROOT}/web/index.html
+            -DOUTPUT=${AC_GENERATED_DIR}/WebPage.generated.h
+            -DVARIABLE=kWebPageHtml
+            -P "${AC_ROOT}/cmake/EmbedTextFile.cmake"
+    DEPENDS "${AC_ROOT}/web/index.html" "${AC_ROOT}/cmake/EmbedTextFile.cmake"
+    COMMENT "Embedding the upload page")
+
+# ---------------------------------------------------------------------------
+# The executable
+# ---------------------------------------------------------------------------
 add_executable(AnimalCrossing
     ${PC_SOURCES}
     ${FIXNES_SOURCES}
     ${GAME_C_SOURCES}
     ${GAME_CXX_SOURCES}
-    src/webos/webos_glue.c
     src/webos/webos_bstring.c
-    src/webos/webos_gpu_profile.c
-    src/webos/webos_present.c
-    src/webos/webos_remote.c
-    src/webos/webos_shader_cache.c
-    src/webos/webos_tev_specialize.c)
+    ${WEBOS_C_SOURCES}
+    ${WEBOS_CXX_SOURCES}
+    "${AC_GENERATED_DIR}/WebPage.generated.h")
 
-# Our own glue is held to stricter warnings than the decomp.
-set_source_files_properties(
-    src/webos/webos_glue.c src/webos/webos_gpu_profile.c src/webos/webos_present.c src/webos/webos_remote.c src/webos/webos_shader_cache.c src/webos/webos_tev_specialize.c
-    PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
+# Our own code is held to stricter warnings than the decomp.
+set_source_files_properties(${WEBOS_C_SOURCES} ${WEBOS_CXX_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
+set_source_files_properties(src/webos/transfer/webos_transfer.cpp PROPERTIES
+    COMPILE_DEFINITIONS "ACWEBOS_VERSION=\"${PROJECT_VERSION}\"")
+target_include_directories(AnimalCrossing PRIVATE "${AC_GENERATED_DIR}" "${AC_ROOT}/src/webos/transfer")
+# cpp-httplib (MIT, single header) as a system header: its warnings are not ours.
+target_include_directories(AnimalCrossing SYSTEM PRIVATE "${AC_ROOT}/third_party/cpp-httplib")
 
 # The port includes both <SDL.h> and <SDL2/SDL_x.h>: both must resolve to the
 # bundled SDL, not to the older SDL 2 headers in the toolchain's sysroot.

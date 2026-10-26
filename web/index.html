@@ -1,0 +1,538 @@
+<!doctype html>
+<!--
+  Animal Crossing (webOS) upload page.
+  Served by the app itself (src/webos/transfer/TransferServer.cpp) and embedded
+  into the binary at build time, so it must stay self-contained: no external
+  scripts, fonts or images.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Animal Crossing on the TV</title>
+<style>
+  :root { --bg:#10241a; --card:#183424; --line:#2f5a3e; --text:#f0f0e6; --dim:#a9c0aa; --accent:#82d2ff; --ok:#7ad66e; --warn:#ff8c64; --title:#ffde78; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:680px; margin:0 auto; padding:16px; }
+  h1 { font-size:1.4rem; margin:8px 0 16px; color:var(--title); }
+  h2 { font-size:1.05rem; margin:0 0 8px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
+  p { margin:6px 0; }
+  .dim { color:var(--dim); font-size:.9rem; }
+  .warn { color:var(--warn); }
+  .ok { color:var(--ok); }
+  input[type=text] { font-size:1.4rem; letter-spacing:.3em; width:7em; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--bg); color:var(--text); }
+  select { font:inherit; padding:6px; border-radius:6px; background:var(--bg); color:var(--text); border:1px solid var(--line); }
+  button, label.button { display:inline-block; font:inherit; padding:8px 14px; border-radius:6px; border:0; background:var(--accent); color:#06202a; font-weight:600; cursor:pointer; margin:4px 4px 4px 0; }
+  button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  input[type=file] { display:none; }
+  progress { width:100%; height:12px; margin-top:8px; }
+  table { width:100%; border-collapse:collapse; font-size:.92rem; }
+  td { padding:6px 4px; border-top:1px solid var(--line); vertical-align:top; }
+  td:last-child { text-align:right; }
+  td.note { text-align:left; }
+  a { color:var(--accent); }
+  .hidden { display:none; }
+  footer { text-align:center; padding:8px 0 24px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Animal Crossing on the TV</h1>
+
+  <section id="pin-section">
+    <h2>Enter the PIN shown on the TV</h2>
+    <p class="dim">On the TV, press 1 on the remote during play to see it.</p>
+    <form id="pin-form">
+      <input id="pin-input" type="text" inputmode="numeric" maxlength="4" autocomplete="off" required>
+      <button type="submit">Connect</button>
+    </form>
+    <p id="pin-error" class="warn hidden"></p>
+  </section>
+
+  <div id="app" class="hidden">
+    <section>
+      <h2>TV status</h2>
+      <p id="disc-line">Loading...</p>
+      <p id="space-line" class="dim"></p>
+      <p id="restart-line" class="warn hidden">Files were received that the game reads at start-up: quit from the game's pause menu and start it again to use them.</p>
+    </section>
+
+    <section>
+      <h2>Disc image</h2>
+      <p class="dim">An image of your own Animal Crossing disc (US version, GAFE01): .iso, .gcm or .ciso. Trimmed images work too.</p>
+      <label class="button" for="disc-file">Choose disc image</label>
+      <input id="disc-file" type="file" accept=".iso,.gcm,.ciso">
+      <progress id="disc-progress" class="hidden" max="100" value="0"></progress>
+      <p id="disc-message"></p>
+    </section>
+
+    <section>
+      <h2>Saves (memory cards)</h2>
+      <table><tbody id="save-list"></tbody></table>
+      <p class="dim">Card A holds your town. Uploading replaces the save with the same name; while the game is running, it is used from the next start.</p>
+      <label for="save-card">Upload to</label>
+      <select id="save-card"><option value="a">Card A</option><option value="b">Card B</option></select>
+      <label class="button" for="save-files">Upload .gci saves</label>
+      <input id="save-files" type="file" accept=".gci" multiple>
+      <p id="save-message"></p>
+    </section>
+
+    <section>
+      <h2>Root and USB</h2>
+      <p id="root-line">Loading...</p>
+      <table><tbody id="drive-list"></tbody></table>
+      <p id="drive-message"></p>
+    </section>
+
+    <section>
+      <h2>Texture pack</h2>
+      <p id="pack-line"></p>
+      <p class="dim">Dolphin-style packs (files named <code>tex1_..._.dds</code>). The TV's graphics chip can show ASTC&nbsp;4x4 or uncompressed DDS files, but not BC1/BC3/BC7 (DXT), the format most packs ship in; those files are skipped. Convert such packs to ASTC first (for example with the ACGC Android port's converter).</p>
+      <label for="pack-target">Upload to</label>
+      <select id="pack-target"></select>
+      <label class="button" for="pack-folder">Choose pack folder</label>
+      <input id="pack-folder" type="file" webkitdirectory multiple>
+      <button id="pack-stop" class="secondary hidden" type="button">Stop</button>
+      <progress id="pack-progress" class="hidden" max="100" value="0"></progress>
+      <p id="pack-message"></p>
+    </section>
+  </div>
+
+  <footer class="dim">
+    Animal Crossing webOS port<span id="app-version"></span> &middot;
+    <a href="https://github.com/pustal/Animal-Crossing-WebOS" target="_blank" rel="noopener">github.com/pustal/Animal-Crossing-WebOS</a>
+  </footer>
+</main>
+
+<script>
+'use strict';
+
+/**
+ * @typedef {{ present: boolean, file: string, size: number, gameId: string }} DiscState
+ * @typedef {{ active: boolean, received: number, expected: number }} UploadState
+ * @typedef {{ process: boolean, homebrewChannel: boolean, detail: string }} RootState
+ * @typedef {{ source: 'none'|'internal'|'usb'|'usb-mount', path: string, folder: string }} PackState
+ * @typedef {{ mount: string, label: string, spaceKnown: boolean, freeBytes: number, totalBytes: number,
+ *             readable: boolean, writable: boolean, packExists: boolean, packFiles: number }} Drive
+ * @typedef {{ version: string, mode: 'setup'|'game', freeBytes: number, safetyMarginBytes: number, disc: DiscState,
+ *             restartPending: boolean, upload: UploadState, root: RootState, texturePack: PackState, drives: Drive[] }} Status
+ * @typedef {{ card: 'a'|'b', name: string, size: number, mtime: number }} Save
+ * @typedef {{ file: File, path: string }} TextureJob
+ */
+
+/** Session-only so the PIN is forgotten when the tab closes. */
+const PIN_KEY = 'acwebos-pin';
+const REFRESH_MS = 3000;
+/** Must match Storage::kMaxSaveBytes on the TV. */
+const MAX_SAVE_BYTES = 4 * 1024 * 1024;
+/** Must match kMaxTextureBytes in TransferServer.cpp. */
+const MAX_TEXTURE_BYTES = 96 * 1024 * 1024;
+/** GameCube disc magic word at offset 0x1C. */
+const GAMECUBE_MAGIC = 0xC2339F3D;
+/** DXGI formats the TV can show (TransferServer accepts any .dds; this filter saves space). */
+const DXGI_SUPPORTED = new Set([134 /* ASTC 4x4 */, 28 /* R8G8B8A8 */, 87 /* B8G8R8A8 */]);
+/** Path characters the TV accepts (IsAllowedTexturePath). */
+const TEXTURE_PATH_PATTERN = /^[A-Za-z0-9_\-.$ ()\[\]+]+(\/[A-Za-z0-9_\-.$ ()\[\]+]+){0,7}$/;
+
+/** @type {Status | null} */
+let lastStatus = null;
+let packStopRequested = false;
+
+/** @param {string} id @returns {HTMLElement} */
+function byId(id) {
+  const element = document.getElementById(id);
+  if (!element) throw new Error('Missing element #' + id);
+  return element;
+}
+
+/** @param {number} bytes @returns {string} */
+function humanBytes(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return (unit === 0 ? value.toFixed(0) : value.toFixed(1)) + ' ' + units[unit];
+}
+
+/** @param {HTMLElement} element @param {string} text @param {''|'ok'|'warn'|'dim'} [kind] */
+function say(element, text, kind = '') {
+  element.textContent = text;
+  element.className = kind;
+}
+
+/** @returns {string} */
+function pin() { return sessionStorage.getItem(PIN_KEY) || ''; }
+
+/**
+ * Calls the TV's API with the PIN attached.
+ * @param {string} path @param {RequestInit} [init] @returns {Promise<Response>}
+ */
+async function api(path, init = {}) {
+  const headers = new Headers(init.headers);
+  headers.set('X-Pin', pin());
+  const response = await fetch(path, { ...init, headers });
+  if (response.status === 401) {
+    sessionStorage.removeItem(PIN_KEY);
+    showPinForm('Wrong PIN. Check the number on the TV.');
+    throw new Error('unauthorised');
+  }
+  return response;
+}
+
+/**
+ * PUT with upload progress (fetch cannot report it).
+ * @param {string} url @param {Blob} body @param {(fraction: number) => void} onProgress
+ * @returns {Promise<{ ok: boolean, text: string }>}
+ */
+function putWithProgress(url, body, onProgress) {
+  return new Promise((resolve) => {
+    const request = new XMLHttpRequest();
+    request.open('PUT', url);
+    request.setRequestHeader('X-Pin', pin());
+    request.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(event.loaded / event.total); };
+    request.onload = () => resolve({ ok: request.status === 200, text: request.responseText });
+    request.onerror = () => resolve({ ok: false, text: 'Connection to the TV was lost.' });
+    request.send(body);
+  });
+}
+
+/** @param {string} [error] */
+function showPinForm(error) {
+  byId('pin-section').classList.remove('hidden');
+  byId('app').classList.add('hidden');
+  const message = byId('pin-error');
+  message.textContent = error || '';
+  message.classList.toggle('hidden', !error);
+}
+
+// ---------------------------------------------------------------- status
+
+async function refreshStatus() {
+  const response = await api('/api/status');
+  /** @type {Status} */
+  const status = await response.json();
+  lastStatus = status;
+  byId('app-version').textContent = ' ' + status.version;
+  byId('pin-section').classList.add('hidden');
+  byId('app').classList.remove('hidden');
+
+  const disc = status.disc;
+  if (disc.present) {
+    say(byId('disc-line'), 'Disc image installed: ' + disc.file + ' (' + humanBytes(disc.size) + ')'
+      + (disc.gameId && disc.gameId !== 'GAFE01' ? '. Note: this port is made for the US version (GAFE01).' : '.'),
+      disc.gameId && disc.gameId !== 'GAFE01' ? 'warn' : 'ok');
+  } else {
+    say(byId('disc-line'), 'No disc image yet. Upload one below; the game starts on the TV as soon as it arrives.', 'warn');
+  }
+  say(byId('space-line'), 'Free space on the TV: ' + humanBytes(status.freeBytes), 'dim');
+  byId('restart-line').classList.toggle('hidden', !status.restartPending);
+
+  renderRootAndDrives(status);
+  renderPack(status);
+}
+
+/** @param {Status} status */
+function renderRootAndDrives(status) {
+  const root = status.root;
+  const rootText = root.process ? 'Root access: yes (the app runs as root).'
+    : root.homebrewChannel ? 'Root access: yes, through the Homebrew Channel.'
+    : 'Root access: no. ' + root.detail;
+  say(byId('root-line'), rootText, root.process || root.homebrewChannel ? 'ok' : 'dim');
+
+  const rootAvailable = root.process || root.homebrewChannel;
+  const list = byId('drive-list');
+  list.replaceChildren();
+  if (status.drives.length === 0) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.textContent = 'No USB drive found. Plug one into the TV to keep a texture pack on it.';
+    cell.className = 'dim note';
+    row.append(cell);
+    list.append(row);
+    return;
+  }
+
+  for (const drive of status.drives) {
+    const row = document.createElement('tr');
+    const info = document.createElement('td');
+    const space = drive.spaceKnown ? humanBytes(drive.freeBytes) + ' free of ' + humanBytes(drive.totalBytes) : 'space unknown';
+    const access = drive.writable ? 'the app can read and write it'
+      : drive.readable ? (rootAvailable ? 'read by the app, written with root' : 'read-only for the app')
+      : (rootAvailable ? 'reached with root only' : 'not accessible to the app');
+    const pack = drive.packExists
+      ? 'Texture pack folder found' + (drive.readable ? ' (' + drive.packFiles + ' files)' : '') + '.'
+      : 'No "' + status.texturePack.folder + '" folder.';
+    info.innerHTML = '';
+    const title = document.createElement('strong');
+    title.textContent = 'USB ' + drive.label;
+    info.append(title, document.createElement('br'), space + ' - ' + access + '.', document.createElement('br'), pack);
+
+    const action = document.createElement('td');
+    if (!drive.packExists && (drive.writable || rootAvailable)) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Create folder';
+      button.addEventListener('click', () => createPackFolder(drive.mount).catch(() => undefined));
+      action.append(button);
+    }
+    row.append(info, action);
+    list.append(row);
+  }
+}
+
+/** @param {Status} status */
+function renderPack(status) {
+  const pack = status.texturePack;
+  const text = pack.source === 'usb' ? 'In use: the pack on the USB drive (' + pack.path + ').'
+    : pack.source === 'usb-mount' ? 'In use: the pack on the USB drive, made readable with root (' + pack.path + ').'
+    : pack.source === 'internal' ? 'In use: the pack in the TV storage.'
+    : 'No texture pack in use. Packs are picked up when the game starts.';
+  say(byId('pack-line'), text, pack.source === 'none' ? 'dim' : 'ok');
+
+  // Upload targets: drives with a pack folder the app or root can write, then the TV storage.
+  const select = /** @type {HTMLSelectElement} */ (byId('pack-target'));
+  const previous = select.value;
+  select.replaceChildren();
+  const rootAvailable = status.root.process || status.root.homebrewChannel;
+  for (const drive of status.drives) {
+    if (drive.packExists && (drive.writable || rootAvailable)) {
+      select.append(new Option('USB ' + drive.label + ' / ' + pack.folder, drive.mount));
+    }
+  }
+  select.append(new Option('TV storage (' + humanBytes(status.freeBytes) + ' free)', 'internal'));
+  if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+}
+
+// ---------------------------------------------------------------- disc
+
+/** @param {File} file @returns {Promise<boolean>} */
+async function looksLikeDisc(file) {
+  const header = new DataView(await file.slice(0, 0x20).arrayBuffer());
+  if (header.byteLength < 0x20) return false;
+  const ciso = String.fromCharCode(header.getUint8(0), header.getUint8(1), header.getUint8(2), header.getUint8(3)) === 'CISO';
+  return ciso || header.getUint32(0x1C, false) === GAMECUBE_MAGIC;
+}
+
+/** @param {File} file */
+async function uploadDisc(file) {
+  const message = byId('disc-message');
+  const progress = /** @type {HTMLProgressElement} */ (byId('disc-progress'));
+  if (!(await looksLikeDisc(file))) {
+    say(message, 'That file is not a GameCube disc image.', 'warn');
+    return;
+  }
+  if (lastStatus && file.size + lastStatus.safetyMarginBytes > lastStatus.freeBytes) {
+    say(message, 'Not enough space on the TV: needs ' + humanBytes(file.size + lastStatus.safetyMarginBytes)
+      + ', ' + humanBytes(lastStatus.freeBytes) + ' free.', 'warn');
+    return;
+  }
+  progress.classList.remove('hidden');
+  progress.value = 0;
+  say(message, 'Uploading ' + humanBytes(file.size) + '... keep this page open.');
+  const result = await putWithProgress('/api/disc', file, (fraction) => { progress.value = Math.floor(fraction * 100); });
+  progress.classList.add('hidden');
+  if (result.ok) {
+    say(message, result.text === 'installed' ? 'Done! The game is starting on the TV.'
+      : 'Done! Quit and start the game again on the TV to use it.', 'ok');
+  } else {
+    say(message, result.text, 'warn');
+  }
+  await refreshStatus();
+}
+
+// ---------------------------------------------------------------- saves
+
+async function refreshSaves() {
+  const response = await api('/api/saves');
+  /** @type {{ saves: Save[] }} */
+  const body = await response.json();
+  const list = byId('save-list');
+  list.replaceChildren();
+  if (body.saves.length === 0) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.textContent = 'No saves yet.';
+    cell.className = 'dim note';
+    row.append(cell);
+    list.append(row);
+    return;
+  }
+  for (const save of body.saves) {
+    const row = document.createElement('tr');
+    const name = document.createElement('td');
+    name.textContent = 'Card ' + save.card.toUpperCase() + ': ' + save.name + ' (' + humanBytes(save.size) + ', '
+      + new Date(save.mtime * 1000).toLocaleString() + ')';
+    const action = document.createElement('td');
+    const link = document.createElement('a');
+    link.href = '/api/saves/' + save.card + '/' + encodeURIComponent(save.name) + '?pin=' + encodeURIComponent(pin());
+    link.download = save.name;
+    link.textContent = 'Download';
+    action.append(link);
+    row.append(name, action);
+    list.append(row);
+  }
+}
+
+/** @param {FileList} files */
+async function uploadSaves(files) {
+  const card = /** @type {HTMLSelectElement} */ (byId('save-card')).value;
+  const results = [];
+  for (const file of Array.from(files)) {
+    if (file.size === 0 || file.size > MAX_SAVE_BYTES || !file.name.toLowerCase().endsWith('.gci')) {
+      results.push(file.name + ': not a .gci save');
+      continue;
+    }
+    const response = await api('/api/saves/' + card + '/' + encodeURIComponent(file.name), { method: 'PUT', body: file });
+    results.push(file.name + ': ' + (response.ok
+      ? (await response.text() === 'installed' ? 'uploaded' : 'received, used from the next start')
+      : await response.text()));
+  }
+  say(byId('save-message'), results.join(' / '));
+  await Promise.all([refreshStatus(), refreshSaves()]);
+}
+
+// ---------------------------------------------------------------- texture pack
+
+/** @param {string} mount */
+async function createPackFolder(mount) {
+  const response = await api('/api/texture-pack/folder?drive=' + encodeURIComponent(mount), { method: 'POST' });
+  say(byId('drive-message'), response.ok ? 'Folder created. Choose it below as the upload target.' : await response.text(),
+    response.ok ? 'ok' : 'warn');
+  await refreshStatus();
+}
+
+/**
+ * Reads a DDS header and tells whether the TV can show it (see pc_texture_pack.c).
+ * @param {File} file @returns {Promise<boolean>}
+ */
+async function isSupportedDds(file) {
+  const header = new DataView(await file.slice(0, 148).arrayBuffer());
+  if (header.byteLength < 128 || header.getUint32(0, true) !== 0x20534444) return false; // "DDS "
+  const flags = header.getUint32(80, true);
+  const fourCC = header.getUint32(84, true);
+  if (flags & 0x4) {
+    if (fourCC !== 0x30315844) return false; // DXT1/DXT5 (and anything but "DX10") need S3TC
+    return header.byteLength >= 132 && DXGI_SUPPORTED.has(header.getUint32(128, true));
+  }
+  return header.getUint32(88, true) === 32; // uncompressed 32-bit
+}
+
+/**
+ * Turns the chosen files into upload jobs: .dds only, path relative to the
+ * chosen folder, names the TV accepts, formats it can show.
+ * @param {FileList} files @returns {Promise<{ jobs: TextureJob[], unsupported: number, badName: number, other: number }>}
+ */
+async function planTextureUpload(files) {
+  /** @type {TextureJob[]} */
+  const jobs = [];
+  let unsupported = 0, badName = 0, other = 0;
+  for (const file of Array.from(files)) {
+    const fullPath = file.webkitRelativePath || file.name;
+    const parts = fullPath.split('/');
+    const path = parts.length > 1 ? parts.slice(1).join('/') : parts[0]; // drop the chosen folder's own name
+    if (!path.toLowerCase().endsWith('.dds') || file.size === 0 || file.size > MAX_TEXTURE_BYTES) { other++; continue; }
+    if (!TEXTURE_PATH_PATTERN.test(path)) { badName++; continue; }
+    if (!(await isSupportedDds(file))) { unsupported++; continue; }
+    jobs.push({ file, path });
+  }
+  return { jobs, unsupported, badName, other };
+}
+
+/** @param {FileList} files */
+async function uploadTexturePack(files) {
+  const message = byId('pack-message');
+  const progress = /** @type {HTMLProgressElement} */ (byId('pack-progress'));
+  const stop = byId('pack-stop');
+  const target = /** @type {HTMLSelectElement} */ (byId('pack-target')).value;
+
+  say(message, 'Checking ' + files.length + ' files...');
+  const plan = await planTextureUpload(files);
+  const skipped = [];
+  if (plan.unsupported) skipped.push(plan.unsupported + ' in a format the TV cannot show (BC/DXT)');
+  if (plan.badName) skipped.push(plan.badName + ' with unusual names');
+  if (plan.other) skipped.push(plan.other + ' that are not textures');
+  if (plan.jobs.length === 0) {
+    say(message, 'Nothing to upload' + (skipped.length ? ': skipped ' + skipped.join(', ') : '') + '.', 'warn');
+    return;
+  }
+
+  const totalBytes = plan.jobs.reduce((sum, job) => sum + job.file.size, 0);
+  packStopRequested = false;
+  stop.classList.remove('hidden');
+  progress.classList.remove('hidden');
+  let sentBytes = 0, done = 0, failed = 0;
+  /** @type {string} */
+  let lastError = '';
+
+  for (const job of plan.jobs) {
+    if (packStopRequested) break;
+    const url = '/api/texture-pack/file?drive=' + encodeURIComponent(target) + '&path=' + encodeURIComponent(job.path);
+    let result = await putWithProgress(url, job.file, (fraction) => {
+      progress.value = Math.floor(((sentBytes + fraction * job.file.size) / totalBytes) * 100);
+    });
+    if (!result.ok && result.text.startsWith('Connection')) {
+      result = await putWithProgress(url, job.file, () => undefined); // one retry after a dropped connection
+    }
+    if (result.ok) done++; else { failed++; lastError = result.text; }
+    if (!result.ok && result.text.startsWith('Not enough space')) break;
+    sentBytes += job.file.size;
+    progress.value = Math.floor((sentBytes / totalBytes) * 100);
+    say(message, 'Uploaded ' + done + ' of ' + plan.jobs.length + ' files (' + humanBytes(sentBytes) + ' of '
+      + humanBytes(totalBytes) + ')' + (failed ? ', ' + failed + ' failed' : '') + '...');
+  }
+
+  stop.classList.add('hidden');
+  progress.classList.add('hidden');
+  const summary = 'Uploaded ' + done + ' of ' + plan.jobs.length + ' textures.'
+    + (failed ? ' ' + failed + ' failed: ' + lastError : '')
+    + (skipped.length ? ' Skipped ' + skipped.join(', ') + '.' : '')
+    + (done ? ' The game picks them up the next time it starts.' : '');
+  say(message, summary, failed ? 'warn' : 'ok');
+  await refreshStatus();
+}
+
+// ---------------------------------------------------------------- wiring
+
+byId('pin-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const input = /** @type {HTMLInputElement} */ (byId('pin-input'));
+  sessionStorage.setItem(PIN_KEY, input.value.trim());
+  try {
+    await Promise.all([refreshStatus(), refreshSaves()]);
+  } catch (error) {
+    // showPinForm() already explained a wrong PIN.
+  }
+});
+
+byId('disc-file').addEventListener('change', (event) => {
+  const input = /** @type {HTMLInputElement} */ (event.target);
+  if (input.files && input.files[0]) uploadDisc(input.files[0]).catch(() => undefined);
+  input.value = '';
+});
+
+byId('save-files').addEventListener('change', (event) => {
+  const input = /** @type {HTMLInputElement} */ (event.target);
+  if (input.files && input.files.length > 0) uploadSaves(input.files).catch(() => undefined);
+  input.value = '';
+});
+
+byId('pack-folder').addEventListener('change', (event) => {
+  const input = /** @type {HTMLInputElement} */ (event.target);
+  if (input.files && input.files.length > 0) uploadTexturePack(input.files).catch(() => undefined);
+  input.value = '';
+});
+
+byId('pack-stop').addEventListener('click', () => { packStopRequested = true; });
+
+if (pin()) {
+  Promise.all([refreshStatus(), refreshSaves()]).catch(() => undefined);
+}
+setInterval(() => {
+  if (pin() && !byId('app').classList.contains('hidden')) refreshStatus().catch(() => undefined);
+}, REFRESH_MS);
+</script>
+</body>
+</html>

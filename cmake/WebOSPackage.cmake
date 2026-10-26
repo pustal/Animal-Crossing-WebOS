@@ -5,7 +5,7 @@
 #   bin/AnimalCrossing           the game (stripped)
 #   lib/libSDL2-2.0.so.0         bundled SDL-webOS
 #   share/shaders/               the port's GLSL sources (rewritten to ES at run time)
-#   LICENSE, THIRD_PARTY_NOTICES.md, LICENSE-ACGC-Android-Port.txt
+#   LICENSE, THIRD_PARTY_NOTICES.md, LICENSE-ACGC-Android-Port.txt, LICENSE-cpp-httplib.txt
 # then builds dist/<id>_<version>_arm.ipk with ares-package (@webos-tools/cli)
 # and the Homebrew Channel manifest next to it.
 #
@@ -35,6 +35,7 @@ add_custom_target(webos-stage
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${DECOMP_ROOT}/pc/shaders" "${AC_IPK_STAGE}/share/shaders"
     COMMAND "${CMAKE_COMMAND}" -E copy "${AC_ROOT}/LICENSE" "${AC_ROOT}/THIRD_PARTY_NOTICES.md" "${AC_IPK_STAGE}/"
     COMMAND "${CMAKE_COMMAND}" -E copy "${DECOMP_ROOT}/LICENSE" "${AC_IPK_STAGE}/LICENSE-ACGC-Android-Port.txt"
+    COMMAND "${CMAKE_COMMAND}" -E copy "${AC_ROOT}/third_party/cpp-httplib/LICENSE" "${AC_IPK_STAGE}/LICENSE-cpp-httplib.txt"
     DEPENDS AnimalCrossing
     COMMENT "Staging the IPK contents in ${AC_IPK_STAGE}"
     VERBATIM)

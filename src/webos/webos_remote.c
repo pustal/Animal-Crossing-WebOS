@@ -15,8 +15,10 @@
  *   blue: X       yellow: Y        0, Play: Start    5: Z
  *   CH-: L        CH+: R           2/8/4/6: camera (C-stick, keypad layout)
  *   Back, Exit: pause menu (Escape, as the port does for Android's Back)
+ *   1: info panel with the upload page address and PIN (webos_overlay.c)
  */
 #include "webos_platform.h"
+#include "webos_overlay.h"
 
 #include <SDL.h>
 #include <stdio.h>
@@ -164,6 +166,12 @@ static int SDLCALL remote_event_filter(void *userdata, SDL_Event *event)
 
     const int scancode = (int)event->key.keysym.scancode;
     const int pressed  = event->type == SDL_KEYDOWN;
+
+    /* 1: show or hide the info panel (upload page address and PIN). */
+    if ((scancode == SDL_SCANCODE_1 || scancode == SDL_SCANCODE_KP_1) && pressed && !event->key.repeat) {
+        webos_overlay_toggle();
+        return 1;
+    }
 
     if (is_pause_key(scancode)) {
         event->key.keysym.scancode = SDL_SCANCODE_ESCAPE;
