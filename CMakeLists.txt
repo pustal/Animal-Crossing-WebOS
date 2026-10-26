@@ -10,7 +10,7 @@
 #   cmake --build build-webos && cmake --build build-webos --target webos-package
 
 cmake_minimum_required(VERSION 3.21)
-project(AnimalCrossingWebOS VERSION 0.2.1 LANGUAGES C CXX)
+project(AnimalCrossingWebOS VERSION 0.2.2 LANGUAGES C CXX)
 
 set(AC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${AC_ROOT}/cmake")
@@ -165,6 +165,7 @@ set_source_files_properties("${DECOMP_ROOT}/pc/src/pc_stubs_cpp.cpp" PROPERTIES 
 # The webOS layer (src/webos/): platform glue in C, upload page in C++
 # ---------------------------------------------------------------------------
 set(WEBOS_C_SOURCES
+    src/webos/webos_bc_decode.c
     src/webos/webos_glue.c
     src/webos/webos_gpu_profile.c
     src/webos/webos_overlay.c
@@ -236,6 +237,8 @@ add_executable(AnimalCrossing
 
 # Our own code is held to stricter warnings than the decomp.
 set_source_files_properties(${WEBOS_C_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
+set_source_files_properties(src/webos/webos_bc_decode.c PROPERTIES
+    INCLUDE_DIRECTORIES "${AC_ROOT}/third_party/bcdec")
 
 # The port includes both <SDL.h> and <SDL2/SDL_x.h>: both must resolve to the
 # bundled SDL, not to the older SDL 2 headers in the toolchain's sysroot.

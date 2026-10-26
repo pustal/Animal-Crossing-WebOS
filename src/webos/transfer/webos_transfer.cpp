@@ -95,7 +95,7 @@ extern "C" int webos_transfer_overlay_text(char *buffer, size_t size)
         text += "\nFiles received: restart the game to use them";
         ++lines;
     }
-    text += "\nPress 1 to hide";
+    text += "\nPress 1 (remote) or LB (controller) to show or hide";
     ++lines;
 
     std::snprintf(buffer, size, "%s", text.c_str());

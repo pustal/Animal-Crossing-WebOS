@@ -88,6 +88,20 @@ void ac_glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum for
     ac_glReadPixels((x), (y), (width), (height), (format), (type), (pixels))
 
 /*
+ * BC (DXT/BPTC) texture fallback (webos_bc_decode.c): the extension list
+ * reports S3TC and BPTC, and BC uploads are decoded to RGBA8 when the GPU
+ * lacks them, so the port's texture pack loader accepts Dolphin packs.
+ */
+void ac_glGetIntegerv(GLenum pname, GLint *data);
+const GLubyte *ac_glGetStringi(GLenum name, GLuint index);
+void ac_glCompressedTexImage2D(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height,
+                               GLint border, GLsizei imageSize, const void *data);
+#define glGetIntegerv(pname, data) ac_glGetIntegerv((pname), (data))
+#define glGetStringi(name, index) ac_glGetStringi((name), (index))
+#define glCompressedTexImage2D(target, level, internalformat, width, height, border, imageSize, data) \
+    ac_glCompressedTexImage2D((target), (level), (internalformat), (width), (height), (border), (imageSize), (data))
+
+/*
  * Buffer swaps routed through webos_present.c, which makes the frame opaque
  * for the TV's compositor (see there). Declared with the struct tag so this
  * header does not need SDL.h.

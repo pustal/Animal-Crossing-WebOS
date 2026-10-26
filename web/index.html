@@ -36,6 +36,7 @@
   a { color:var(--accent); }
   .hidden { display:none; }
   footer { text-align:center; padding:8px 0 24px; }
+  #pack-message { white-space:pre-line; overflow-wrap:anywhere; }
 </style>
 </head>
 <body>
@@ -90,7 +91,7 @@
     <section>
       <h2>Texture pack</h2>
       <p id="pack-line"></p>
-      <p class="dim">Dolphin-style packs (files named <code>tex1_..._.dds</code>). The TV's graphics chip can show ASTC&nbsp;4x4 or uncompressed DDS files, but not BC1/BC3/BC7 (DXT), the format most packs ship in; those files are skipped. Convert such packs to ASTC first (for example with the ACGC Android port's converter).</p>
+      <p class="dim">Dolphin-style packs (files named <code>tex1_..._.dds</code>). The TV shows ASTC&nbsp;4x4 and uncompressed DDS files directly. BC1/BC3/BC7 (DXT) files, the format most packs ship in, also work: the TV's processor decodes each texture the first time the game uses it, which can cause a brief hitch and uses more memory.</p>
       <label for="pack-target">Upload to</label>
       <select id="pack-target"></select>
       <label class="button" for="pack-folder">Choose pack folder</label>
@@ -132,10 +133,15 @@ const MAX_SAVE_BYTES = 4 * 1024 * 1024;
 const MAX_TEXTURE_BYTES = 96 * 1024 * 1024;
 /** GameCube disc magic word at offset 0x1C. */
 const GAMECUBE_MAGIC = 0xC2339F3D;
-/** DXGI formats the TV can show (TransferServer accepts any .dds; this filter saves space). */
-const DXGI_SUPPORTED = new Set([134 /* ASTC 4x4 */, 28 /* R8G8B8A8 */, 87 /* B8G8R8A8 */]);
-/** Path characters the TV accepts (IsAllowedTexturePath). */
-const TEXTURE_PATH_PATTERN = /^[A-Za-z0-9_\-.$ ()\[\]+]+(\/[A-Za-z0-9_\-.$ ()\[\]+]+){0,7}$/;
+/** DXGI formats the port's texture loader reads (pc_texture_pack.c); BC ones are decoded on the TV. */
+const DXGI_NATIVE = new Set([134 /* ASTC 4x4 */, 28 /* R8G8B8A8 */, 87 /* B8G8R8A8 */]);
+const DXGI_DECODED = new Set([71 /* BC1 */, 77 /* BC3 */, 98 /* BC7 */]);
+/** Path rules of the TV (IsAllowedTexturePath in TransferServer.cpp). */
+const MAX_TEXTURE_PATH = 260;
+const MAX_TEXTURE_DEPTH = 12;
+const FORBIDDEN_NAME_CHARS = /[\x00-\x1f\x7f\\:*?"<>|]/;
+/** Texture files uploaded at the same time. */
+const PARALLEL_UPLOADS = 3;
 
 /** @type {Status | null} */
 let lastStatus = null;
@@ -332,7 +338,16 @@ async function uploadDisc(file) {
   progress.classList.remove('hidden');
   progress.value = 0;
   say(message, 'Uploading ' + humanBytes(file.size) + '... keep this page open.');
-  const result = await putWithProgress('/api/disc', file, (fraction) => { progress.value = Math.floor(fraction * 100); });
+  const started = performance.now();
+  const result = await putWithProgress('/api/disc', file, (fraction) => {
+    progress.value = Math.floor(fraction * 100);
+    const sent = fraction * file.size;
+    const elapsed = (performance.now() - started) / 1000;
+    const rate = elapsed > 1 ? sent / elapsed : 0;
+    say(message, 'Uploading: ' + humanBytes(sent) + ' of ' + humanBytes(file.size)
+      + (rate ? ' at ' + humanBytes(rate) + '/s, about ' + humanDuration((file.size - sent) / rate) + ' left' : '')
+      + '. Keep this page open.');
+  });
   progress.classList.add('hidden');
   if (result.ok) {
     say(message, result.text === 'installed' ? 'Done! The game is starting on the TV.'
@@ -376,11 +391,11 @@ async function refreshSaves() {
   }
 }
 
-/** @param {FileList} files */
+/** @param {File[]} files */
 async function uploadSaves(files) {
   const card = /** @type {HTMLSelectElement} */ (byId('save-card')).value;
   const results = [];
-  for (const file of Array.from(files)) {
+  for (const file of files) {
     if (file.size === 0 || file.size > MAX_SAVE_BYTES || !file.name.toLowerCase().endsWith('.gci')) {
       results.push(file.name + ': not a .gci save');
       continue;
@@ -405,88 +420,140 @@ async function createPackFolder(mount) {
 }
 
 /**
- * Reads a DDS header and tells whether the TV can show it (see pc_texture_pack.c).
- * @param {File} file @returns {Promise<boolean>}
+ * Reads a DDS header and tells how the TV can use it (see pc_texture_pack.c).
+ * @param {File} file @returns {Promise<'native'|'decoded'|'unsupported'>}
  */
-async function isSupportedDds(file) {
+async function ddsKind(file) {
   const header = new DataView(await file.slice(0, 148).arrayBuffer());
-  if (header.byteLength < 128 || header.getUint32(0, true) !== 0x20534444) return false; // "DDS "
+  if (header.byteLength < 128 || header.getUint32(0, true) !== 0x20534444) return 'unsupported'; // "DDS "
   const flags = header.getUint32(80, true);
   const fourCC = header.getUint32(84, true);
   if (flags & 0x4) {
-    if (fourCC !== 0x30315844) return false; // DXT1/DXT5 (and anything but "DX10") need S3TC
-    return header.byteLength >= 132 && DXGI_SUPPORTED.has(header.getUint32(128, true));
+    if (fourCC === 0x31545844 || fourCC === 0x35545844) return 'decoded'; // "DXT1", "DXT5"
+    if (fourCC !== 0x30315844 || header.byteLength < 132) return 'unsupported'; // anything but "DX10"
+    const dxgi = header.getUint32(128, true);
+    return DXGI_NATIVE.has(dxgi) ? 'native' : DXGI_DECODED.has(dxgi) ? 'decoded' : 'unsupported';
   }
-  return header.getUint32(88, true) === 32; // uncompressed 32-bit
+  return header.getUint32(88, true) === 32 ? 'native' : 'unsupported'; // uncompressed 32-bit
+}
+
+/**
+ * Checks a texture path against the TV's rules.
+ * @param {string} path @returns {'ok'|'hidden'|'bad'}
+ */
+function checkTexturePath(path) {
+  const parts = path.split('/');
+  if (parts.some((part) => part.startsWith('.'))) return 'hidden'; // e.g. macOS "._" metadata files
+  if (new TextEncoder().encode(path).length > MAX_TEXTURE_PATH || parts.length > MAX_TEXTURE_DEPTH) return 'bad';
+  if (parts.some((part) => part === '' || part.endsWith(' ') || FORBIDDEN_NAME_CHARS.test(part))) return 'bad';
+  return 'ok';
+}
+
+/** @param {number} seconds @returns {string} */
+function humanDuration(seconds) {
+  if (!isFinite(seconds) || seconds < 0) return '...';
+  if (seconds < 90) return Math.round(seconds) + ' s';
+  if (seconds < 5400) return Math.round(seconds / 60) + ' min';
+  return (seconds / 3600).toFixed(1) + ' h';
 }
 
 /**
  * Turns the chosen files into upload jobs: .dds only, path relative to the
- * chosen folder, names the TV accepts, formats it can show.
- * @param {FileList} files @returns {Promise<{ jobs: TextureJob[], unsupported: number, badName: number, other: number }>}
+ * chosen folder, names the TV accepts, formats its loader reads.
+ * @param {File[]} files @param {(checked: number) => void} onProgress
+ * @returns {Promise<{ jobs: TextureJob[], decoded: number, unsupported: number, badName: number, hidden: number, other: number }>}
  */
-async function planTextureUpload(files) {
+async function planTextureUpload(files, onProgress) {
   /** @type {TextureJob[]} */
   const jobs = [];
-  let unsupported = 0, badName = 0, other = 0;
-  for (const file of Array.from(files)) {
+  let decoded = 0, unsupported = 0, badName = 0, hidden = 0, other = 0, checked = 0;
+  for (const file of files) {
+    if (++checked % 250 === 0) onProgress(checked);
     const fullPath = file.webkitRelativePath || file.name;
     const parts = fullPath.split('/');
     const path = parts.length > 1 ? parts.slice(1).join('/') : parts[0]; // drop the chosen folder's own name
+    const pathCheck = checkTexturePath(path);
+    if (pathCheck === 'hidden') { hidden++; continue; }
     if (!path.toLowerCase().endsWith('.dds') || file.size === 0 || file.size > MAX_TEXTURE_BYTES) { other++; continue; }
-    if (!TEXTURE_PATH_PATTERN.test(path)) { badName++; continue; }
-    if (!(await isSupportedDds(file))) { unsupported++; continue; }
+    if (pathCheck === 'bad') { badName++; continue; }
+    const kind = await ddsKind(file);
+    if (kind === 'unsupported') { unsupported++; continue; }
+    if (kind === 'decoded') decoded++;
     jobs.push({ file, path });
   }
-  return { jobs, unsupported, badName, other };
+  onProgress(checked);
+  return { jobs, decoded, unsupported, badName, hidden, other };
 }
 
-/** @param {FileList} files */
+/** @param {File[]} files */
 async function uploadTexturePack(files) {
   const message = byId('pack-message');
   const progress = /** @type {HTMLProgressElement} */ (byId('pack-progress'));
   const stop = byId('pack-stop');
   const target = /** @type {HTMLSelectElement} */ (byId('pack-target')).value;
 
-  say(message, 'Checking ' + files.length + ' files...');
-  const plan = await planTextureUpload(files);
+  progress.classList.remove('hidden');
+  const plan = await planTextureUpload(files, (checked) => {
+    progress.value = Math.floor((checked / files.length) * 100);
+    say(message, 'Checking files: ' + checked + ' of ' + files.length + '...');
+  });
   const skipped = [];
-  if (plan.unsupported) skipped.push(plan.unsupported + ' in a format the TV cannot show (BC/DXT)');
-  if (plan.badName) skipped.push(plan.badName + ' with unusual names');
+  if (plan.unsupported) skipped.push(plan.unsupported + ' in a format the game cannot read (e.g. DXT3, BC4-BC6)');
+  if (plan.badName) skipped.push(plan.badName + ' with names a USB drive cannot store or that are too long');
+  if (plan.hidden) skipped.push(plan.hidden + ' hidden or system files');
   if (plan.other) skipped.push(plan.other + ' that are not textures');
   if (plan.jobs.length === 0) {
+    progress.classList.add('hidden');
     say(message, 'Nothing to upload' + (skipped.length ? ': skipped ' + skipped.join(', ') : '') + '.', 'warn');
     return;
   }
 
   const totalBytes = plan.jobs.reduce((sum, job) => sum + job.file.size, 0);
+  const started = performance.now();
+  /** Bytes of finished files plus the in-flight progress of each worker. */
+  let finishedBytes = 0, done = 0, failed = 0, next = 0, outOfSpace = false;
+  const inFlight = new Array(PARALLEL_UPLOADS).fill(0);
+  let lastError = '', currentName = '';
   packStopRequested = false;
   stop.classList.remove('hidden');
-  progress.classList.remove('hidden');
-  let sentBytes = 0, done = 0, failed = 0;
-  /** @type {string} */
-  let lastError = '';
 
-  for (const job of plan.jobs) {
-    if (packStopRequested) break;
-    const url = '/api/texture-pack/file?drive=' + encodeURIComponent(target) + '&path=' + encodeURIComponent(job.path);
-    let result = await putWithProgress(url, job.file, (fraction) => {
-      progress.value = Math.floor(((sentBytes + fraction * job.file.size) / totalBytes) * 100);
-    });
-    if (!result.ok && result.text.startsWith('Connection')) {
-      result = await putWithProgress(url, job.file, () => undefined); // one retry after a dropped connection
+  const render = () => {
+    const sent = finishedBytes + inFlight.reduce((a, b) => a + b, 0);
+    const elapsed = (performance.now() - started) / 1000;
+    const rate = elapsed > 1 ? sent / elapsed : 0;
+    progress.value = Math.floor((sent / totalBytes) * 100);
+    say(message, 'Uploading ' + (done + failed) + ' of ' + plan.jobs.length + ' files, '
+      + humanBytes(sent) + ' of ' + humanBytes(totalBytes)
+      + (rate ? ' at ' + humanBytes(rate) + '/s, about ' + humanDuration((totalBytes - sent) / rate) + ' left' : '')
+      + (failed ? ', ' + failed + ' failed' : '') + '.\n' + currentName);
+  };
+
+  /** @param {number} worker */
+  const runWorker = async (worker) => {
+    while (!packStopRequested && !outOfSpace && next < plan.jobs.length) {
+      const job = plan.jobs[next++];
+      currentName = job.path;
+      const url = '/api/texture-pack/file?drive=' + encodeURIComponent(target) + '&path=' + encodeURIComponent(job.path);
+      const onProgress = (fraction) => { inFlight[worker] = fraction * job.file.size; render(); };
+      let result = await putWithProgress(url, job.file, onProgress);
+      if (!result.ok && result.text.startsWith('Connection')) {
+        result = await putWithProgress(url, job.file, onProgress); // one retry after a dropped connection
+      }
+      inFlight[worker] = 0;
+      finishedBytes += job.file.size;
+      if (result.ok) done++; else { failed++; lastError = result.text; }
+      if (!result.ok && result.text.startsWith('Not enough space')) outOfSpace = true;
+      render();
     }
-    if (result.ok) done++; else { failed++; lastError = result.text; }
-    if (!result.ok && result.text.startsWith('Not enough space')) break;
-    sentBytes += job.file.size;
-    progress.value = Math.floor((sentBytes / totalBytes) * 100);
-    say(message, 'Uploaded ' + done + ' of ' + plan.jobs.length + ' files (' + humanBytes(sentBytes) + ' of '
-      + humanBytes(totalBytes) + ')' + (failed ? ', ' + failed + ' failed' : '') + '...');
-  }
+  };
+  await Promise.all(Array.from({ length: PARALLEL_UPLOADS }, (_, worker) => runWorker(worker)));
 
   stop.classList.add('hidden');
   progress.classList.add('hidden');
-  const summary = 'Uploaded ' + done + ' of ' + plan.jobs.length + ' textures.'
+  const elapsed = (performance.now() - started) / 1000;
+  const summary = (packStopRequested ? 'Stopped. ' : '') + 'Uploaded ' + done + ' of ' + plan.jobs.length + ' textures in '
+    + humanDuration(elapsed) + '.'
+    + (plan.decoded ? ' ' + plan.decoded + ' are BC/DXT files the TV decodes when they are first used.' : '')
     + (failed ? ' ' + failed + ' failed: ' + lastError : '')
     + (skipped.length ? ' Skipped ' + skipped.join(', ') + '.' : '')
     + (done ? ' The game picks them up the next time it starts.' : '');
@@ -515,13 +582,16 @@ byId('disc-file').addEventListener('change', (event) => {
 
 byId('save-files').addEventListener('change', (event) => {
   const input = /** @type {HTMLInputElement} */ (event.target);
-  if (input.files && input.files.length > 0) uploadSaves(input.files).catch(() => undefined);
+  const files = input.files ? Array.from(input.files) : [];
+  if (files.length > 0) uploadSaves(files).catch((error) => say(byId('save-message'), String(error), 'warn'));
   input.value = '';
 });
 
 byId('pack-folder').addEventListener('change', (event) => {
   const input = /** @type {HTMLInputElement} */ (event.target);
-  if (input.files && input.files.length > 0) uploadTexturePack(input.files).catch(() => undefined);
+  // Copy the list first: clearing the input below empties the live FileList.
+  const files = input.files ? Array.from(input.files) : [];
+  if (files.length > 0) uploadTexturePack(files).catch((error) => say(byId('pack-message'), String(error), 'warn'));
   input.value = '';
 });
 

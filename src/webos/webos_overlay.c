@@ -2,8 +2,8 @@
  * @file webos_overlay.c
  * @brief In-game info panel: the upload page address, PIN and texture pack state.
  *
- * Shown for a few seconds when the game starts and toggled with the remote's
- * 1 key (webos_remote.c). Drawn by webos_present.c just before each buffer
+ * Shown for 20 seconds when the game starts and toggled with the remote's 1
+ * key or a controller's left shoulder button (webos_remote.c). Drawn by webos_present.c just before each buffer
  * swap, with its own shader, vertex array and font texture. Every piece of
  * GL state it touches is saved first and restored afterwards, because the
  * port's renderer tracks GL state itself and would otherwise skip calls.
@@ -18,7 +18,7 @@
 #include <string.h>
 
 /** Shown automatically for this long after the first frame. */
-static const Uint32 kAutoShowMs = 10000;
+static const Uint32 kAutoShowMs = 20000;
 /** The text is rebuilt this often (it looks up the network address). */
 static const Uint32 kTextRefreshMs = 2000;
 

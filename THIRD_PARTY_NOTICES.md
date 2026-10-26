@@ -9,6 +9,7 @@
 | [SDL-webOS](https://github.com/webosbrew/SDL-webOS) 2.30.12 | bundled as `lib/libSDL2-2.0.so.0` | zlib |
 | [cpp-httplib](https://github.com/yhirose/cpp-httplib) 0.63.0 by yhirose | upload page server (`third_party/cpp-httplib/`) | MIT (`third_party/cpp-httplib/LICENSE`) |
 | [font8x8](https://github.com/dhepper/font8x8) by Daniel Hepper | setup screen and overlay font (`src/webos/transfer/BitmapFont.cpp`) | Public domain |
+| [bcdec](https://github.com/iOrange/bcdec) by Sergii Kudlai | BC1-BC7 texture decoding (`third_party/bcdec/`) | MIT or Unlicense (`third_party/bcdec/LICENSE`) |
 | Khronos OpenGL ES 3 and KHR headers | `third_party/khronos/` (build only) | MIT (in each header) |
 
 Only the components above that are compiled into the app are distributed in

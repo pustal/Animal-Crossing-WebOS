@@ -19,8 +19,8 @@
 #include "UsbAccess.h"
 #include "WebPage.generated.h"
 
-// Keep the server light: two workers are plenty for one person with a phone.
-#define CPPHTTPLIB_THREAD_POOL_COUNT 2
+// Four workers: the page uploads texture files three at a time and polls the status alongside.
+#define CPPHTTPLIB_THREAD_POOL_COUNT 4
 #include <httplib.h>
 
 #include <unistd.h>
@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -51,7 +52,7 @@ constexpr int kPortAttempts      = 10;
 /** Largest single texture file accepted (a 4K RGBA DDS with mipmaps is ~85 MB; HD packs stay far below). */
 constexpr std::uint64_t kMaxTextureBytes = 96ull * 1024ull * 1024ull;
 /** Deepest folder nesting accepted inside a texture pack upload. */
-constexpr int kMaxPathDepth = 8;
+constexpr int kMaxPathDepth = 12;
 
 /** Escapes @p text for use inside a JSON string literal. */
 std::string JsonEscape(const std::string &text)
@@ -136,25 +137,29 @@ std::int64_t StreamBodyToFile(const httplib::ContentReader &reader, const std::s
 
 /**
  * Validates a texture path from the page: relative, at most kMaxPathDepth
- * folders, no "." or ".." parts, plain characters only (Dolphin names use
- * letters, digits, '_' and '$'), and a .dds file name.
+ * folders, no "." / ".." parts or hidden names (which also skips macOS "._"
+ * metadata files), no control characters or characters FAT/exFAT drives
+ * reject, and a .dds file name. The length limit keeps
+ * "texture_pack/<path>" inside the port's 300-byte path buffer
+ * (pc_texture_pack.c, scan_directory).
  */
 bool IsAllowedTexturePath(const std::string &path)
 {
-    if (path.empty() || path.size() > 240 || path.front() == '/')
+    constexpr std::size_t kMaxPathBytes = 260;
+    if (path.empty() || path.size() > kMaxPathBytes || path.front() == '/')
         return false;
     int depth = 0;
     std::size_t start = 0;
     while (start <= path.size()) {
         const std::size_t end     = path.find('/', start);
         const std::string segment = path.substr(start, end == std::string::npos ? std::string::npos : end - start);
-        if (segment.empty() || segment == "." || segment == ".." || segment.front() == '.')
+        if (segment.empty() || segment.front() == '.' || segment.back() == ' ')
             return false;
-        const bool plain = std::all_of(segment.begin(), segment.end(), [](char c) {
-            return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '-' || c == '.' || c == '$' || c == ' '
-                   || c == '(' || c == ')' || c == '[' || c == ']' || c == '+';
+        const bool allowed = std::none_of(segment.begin(), segment.end(), [](char c) {
+            const unsigned char u = static_cast<unsigned char>(c);
+            return u < 0x20 || u == 0x7F || std::strchr("\\:*?\"<>|", c) != nullptr;
         });
-        if (!plain || ++depth > kMaxPathDepth)
+        if (!allowed || ++depth > kMaxPathDepth)
             return false;
         if (end == std::string::npos)
             break;

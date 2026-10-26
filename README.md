@@ -23,6 +23,7 @@ renderer path) for webOS, with a small webOS layer in `src/webos/`:
 | `webos_present.c` | Makes each frame opaque before it is shown (the game writes alpha, which the TV's compositor would otherwise blend away), and shows an activity bar while shaders compile on first launch |
 | `webos_shader_cache.c` | Rewrites the desktop GLSL 3.30 shaders to GLSL ES 3.00, and caches linked shader programs in `shader_binaries/`: the first launch compiles them (about 30 s), later launches load them in well under a second |
 | `webos_tev_specialize.c` | Rewrites each of the port's TEV shader variants into straight-line code. The TV's Mali driver does not fold the port's generic shader, which made dialogue screens run at 6-10 fps; `tools/tev_equivalence/run.sh` checks the rewritten shaders render identically |
+| `webos_bc_decode.c` | Lets the texture pack loader use BC1/BC3/BC7 (DXT) packs on a GPU without them: reports the extensions and decodes those uploads to RGBA on the CPU |
 | `webos_gpu_profile.c` | Optional GPU timing mode for finding expensive draws (see Troubleshooting) |
 | `webos_overlay.c` | In-game panel with the upload page address and PIN (remote key 1) |
 | `transfer/` | The upload page server (cpp-httplib), setup screen, USB drive and root detection, texture pack placement; the page itself is `web/index.html`. Built as `lib/libacwebos_transfer.so` with its own private C++ runtime, because the game replaces the global `operator new` with its own heap allocator |
@@ -49,7 +50,7 @@ frame in about 16 ms at 1080p.
 ### The upload page
 
 The page stays available while you play (port 47811; press **1** on the
-remote to see the address and PIN). It only answers devices on your home
+remote, or LB on a controller, to see the address and PIN). It only answers devices on your home
 network that send the PIN. It can:
 
 - replace the disc image;
@@ -62,10 +63,12 @@ network that send the PIN. It can:
   pack on a USB drive automatically (a link, or a root bind mount when the app
   cannot read the drive itself).
 
-Texture packs must be in a format the TV's GPU can show: **ASTC 4x4** or
-uncompressed DDS. Most Dolphin packs use BC1/BC3/BC7 (DXT), which the Mali GPU
-does not support; the page skips those files. Convert such packs to ASTC first
-(the ACGC Android port has a converter).
+Dolphin texture packs work as they are. The TV's Mali GPU shows ASTC 4x4 and
+uncompressed DDS files directly; BC1/BC3/BC7 (DXT) files, which most packs
+use, are decoded by the TV's processor the first time the game uses each
+texture (`webos_bc_decode.c`, using bcdec). That can cause a brief hitch and
+takes more memory than the GPU-native formats. The page skips files the
+game's loader cannot read at all (DXT3, BC4-BC6) and system files.
 
 The data folder (disc image, saves, settings, logs) is
 `/media/developer/apps/usr/palm/applications/org.animalcrossingwebos.app/data`
@@ -83,7 +86,7 @@ the camera, Back/Select opens the pause menu). The TV remote, held normally:
 | Red | B | | CH − / CH + | L / R |
 | Blue | X | | 2 / 8 / 4 / 6 | Camera (C-stick) |
 | Yellow | Y | | Back, Exit | Pause menu |
-| 1 | Upload page address and PIN | | | |
+| 1 | Upload page address and PIN (LB on a controller) | | | |
 
 A keyboard uses the PC port's layout, except the camera (T/F/G/H) and Start
 (P), whose PC keys the remote sends. The layout is written to
@@ -119,7 +122,7 @@ downloads the SDL-webOS release it bundles.
 
 ## Roadmap
 
-- A texture pack converter (BC to ASTC) that runs on a computer
+- Optionally re-encode decoded BC textures to ETC2 to save memory
 - Internal resolution setting
 
 ## Credits

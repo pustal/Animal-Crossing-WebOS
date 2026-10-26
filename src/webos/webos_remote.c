@@ -15,7 +15,8 @@
  *   blue: X       yellow: Y        0, Play: Start    5: Z
  *   CH-: L        CH+: R           2/8/4/6: camera (C-stick, keypad layout)
  *   Back, Exit: pause menu (Escape, as the port does for Android's Back)
- *   1: info panel with the upload page address and PIN (webos_overlay.c)
+ *   1: info panel with the upload page address and PIN (webos_overlay.c);
+ *      on a game controller the left shoulder button (LB / L1) does the same
  */
 #include "webos_platform.h"
 #include "webos_overlay.h"
@@ -161,6 +162,11 @@ static int is_pause_key(int scancode)
 static int SDLCALL remote_event_filter(void *userdata, SDL_Event *event)
 {
     (void)userdata;
+    /* Left shoulder (LB / L1), unused by the port's controller layout: info panel. */
+    if (event->type == SDL_CONTROLLERBUTTONDOWN && event->cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) {
+        webos_overlay_toggle();
+        return 1;
+    }
     if (event->type != SDL_KEYDOWN && event->type != SDL_KEYUP)
         return 1;
 
