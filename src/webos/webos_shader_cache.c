@@ -49,6 +49,7 @@ typedef struct {
     GLuint id;            /**< 0 = free slot. */
     uint64_t source_hash; /**< FNV-1a of the rewritten source. */
     int pending;          /**< Source set but glCompileShader deferred. */
+    char *source;         /**< Rewritten source, kept only in the GPU timing mode. */
 } ShaderEntry;
 
 /** The port keeps one vertex shader and deletes fragment shaders after linking, so few are live. */
@@ -173,6 +174,12 @@ int ac_glShaderSource(GLuint shader, GLsizei count, const GLchar *const *string,
     if (entry) {
         entry->source_hash = fnv1a(kFnvOffset, rewritten, strlen(rewritten));
         entry->pending     = 0;
+        free(entry->source);
+        entry->source = NULL;
+        if (webos_gpu_profile_active()) {
+            entry->source = rewritten; /* kept for webos_shader_cache_fragment_source() */
+            return 1;
+        }
     }
     free(rewritten);
     return 1;
@@ -203,8 +210,10 @@ void ac_glGetShaderiv(GLuint shader, GLenum pname, GLint *params)
 void ac_glDeleteShader(GLuint shader)
 {
     ShaderEntry *entry = find_shader(shader);
-    if (entry)
+    if (entry) {
+        free(entry->source);
         memset(entry, 0, sizeof(*entry));
+    }
     glDeleteShader(shader);
 }
 
@@ -298,12 +307,59 @@ static void save_binary(GLuint program, uint64_t key)
     free(data);
 }
 
+/* ---- Fragment sources per program (GPU timing mode only) ---- */
+
+typedef struct {
+    GLuint program;       /**< 0 = free slot. */
+    char *fragment;       /**< Copy of the fragment shader source. */
+} ProgramSource;
+
+#define PROGRAM_SOURCE_SLOTS 512
+static ProgramSource s_program_sources[PROGRAM_SOURCE_SLOTS];
+
+/** Remembers the fragment source linked into @p program. */
+static void remember_fragment_source(GLuint program, ShaderEntry *const *attached, GLsizei count)
+{
+    for (GLsizei i = 0; i < count; ++i) {
+        if (!attached[i] || !attached[i]->source)
+            continue;
+        GLint type = 0;
+        glGetShaderiv(attached[i]->id, GL_SHADER_TYPE, &type);
+        if (type != GL_FRAGMENT_SHADER)
+            continue;
+
+        ProgramSource *slot = NULL;
+        for (int s = 0; s < PROGRAM_SOURCE_SLOTS && !slot; ++s)
+            if (s_program_sources[s].program == program)
+                slot = &s_program_sources[s];
+        for (int s = 0; s < PROGRAM_SOURCE_SLOTS && !slot; ++s)
+            if (s_program_sources[s].program == 0)
+                slot = &s_program_sources[s];
+        if (!slot)
+            return;
+        free(slot->fragment);
+        slot->program  = program;
+        slot->fragment = strdup(attached[i]->source);
+        return;
+    }
+}
+
+const char *webos_shader_cache_fragment_source(unsigned int program)
+{
+    for (int s = 0; s < PROGRAM_SOURCE_SLOTS; ++s)
+        if (s_program_sources[s].program == program)
+            return s_program_sources[s].fragment;
+    return NULL;
+}
+
 void ac_glLinkProgram(GLuint program)
 {
     uint64_t key = 0;
     ShaderEntry *attached[4] = { NULL, NULL, NULL, NULL };
     GLsizei count = 0;
     const int cacheable = program_key(program, &key, attached, &count);
+    if (webos_gpu_profile_active())
+        remember_fragment_source(program, attached, count);
 
     if (cacheable && load_binary(program, key))
         return;

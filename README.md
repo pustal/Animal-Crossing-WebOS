@@ -22,6 +22,7 @@ renderer path) for webOS, with a small webOS layer in `src/webos/`:
 | `webos_glue.c` | Picks the data folder, creates `rom/`, `save/`, `texture_pack/`, links the shaders, writes logs, logs crashes |
 | `webos_present.c` | Makes each frame opaque before it is shown (the game writes alpha, which the TV's compositor would otherwise blend away), and shows an activity bar while shaders compile on first launch |
 | `webos_shader_cache.c` | Rewrites the desktop GLSL 3.30 shaders to GLSL ES 3.00, and caches linked shader programs in `shader_binaries/`: the first launch compiles them (about 30 s), later launches load them in well under a second |
+| `webos_gpu_profile.c` | Optional GPU timing mode for finding expensive draws (see Troubleshooting) |
 | `webos_remote.c` | TV remote controls (below); Back opens the pause menu instead of closing the app |
 | `glad/gl.h` | Replaces the desktop GL loader: maps the few desktop-only GL calls to ES ones and routes shader calls and buffer swaps to the files above |
 | `webos_forced_decls.h`, `webos_bstring.c` | Reconcile the decomp's own libc declarations with the TV's glibc |
@@ -76,6 +77,11 @@ The app writes `stdout.log` and `stderr.log` to its data folder. To measure
 performance, create an empty file named `profile.enable` there
 (`touch <data folder>/profile.enable`): the next launch writes a frame-time
 report to `stdout.log` every 300 frames. Delete the file to turn it off.
+
+`gpuprofile.enable` turns on a GPU timing mode instead: each draw, clear and
+upload is timed on its own (the game runs much slower while it is on), the
+totals per shader go to `stdout.log` as `[GPU]` lines, and the fragment
+shaders that cost the most are saved as `gpu_hot_<n>.frag`.
 
 ## Building
 

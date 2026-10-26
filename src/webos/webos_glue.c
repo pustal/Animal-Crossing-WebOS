@@ -188,6 +188,7 @@ void android_bootstrap(void)
 
     install_crash_logger();
     enable_profiler_if_requested();
+    webos_gpu_profile_init();          /* before any shader is created */
     webos_remote_set_hints();          /* before pc_main.c calls SDL_Init */
     webos_write_keybindings_once();    /* before pc_main.c loads keybindings.ini */
 

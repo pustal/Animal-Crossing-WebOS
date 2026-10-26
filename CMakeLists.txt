@@ -10,7 +10,7 @@
 #   cmake --build build-webos && cmake --build build-webos --target webos-package
 
 cmake_minimum_required(VERSION 3.21)
-project(AnimalCrossingWebOS VERSION 0.1.2 LANGUAGES C CXX)
+project(AnimalCrossingWebOS VERSION 0.1.3 LANGUAGES C CXX)
 
 set(AC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${AC_ROOT}/cmake")
@@ -171,13 +171,14 @@ add_executable(AnimalCrossing
     ${GAME_CXX_SOURCES}
     src/webos/webos_glue.c
     src/webos/webos_bstring.c
+    src/webos/webos_gpu_profile.c
     src/webos/webos_present.c
     src/webos/webos_remote.c
     src/webos/webos_shader_cache.c)
 
 # Our own glue is held to stricter warnings than the decomp.
 set_source_files_properties(
-    src/webos/webos_glue.c src/webos/webos_present.c src/webos/webos_remote.c src/webos/webos_shader_cache.c
+    src/webos/webos_glue.c src/webos/webos_gpu_profile.c src/webos/webos_present.c src/webos/webos_remote.c src/webos/webos_shader_cache.c
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 
 # The port includes both <SDL.h> and <SDL2/SDL_x.h>: both must resolve to the

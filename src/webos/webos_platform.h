@@ -36,6 +36,34 @@ unsigned long webos_frames_presented(void);
  */
 void webos_show_boot_activity(void);
 
+/* ---- webos_gpu_profile.c ---- */
+
+/** Turns the GPU timing mode on if gpuprofile.enable is in the data folder. */
+void webos_gpu_profile_init(void);
+
+/** @return Non-zero while the GPU timing mode is on. */
+int webos_gpu_profile_active(void);
+
+/** Finishes pending GPU work and returns the start time (ms) of a timed section. */
+double webos_gpu_profile_begin(void);
+
+/** Ends a timed section around webos_present.c's alpha pass. */
+void webos_gpu_profile_end_opaque_pass(double start);
+
+/** Ends a timed section around the buffer swap. */
+void webos_gpu_profile_end_swap(double start);
+
+/** Counts a presented frame; prints the report every few hundred frames. */
+void webos_gpu_profile_frame_done(void);
+
+/* ---- webos_shader_cache.c ---- */
+
+/**
+ * Fragment shader source linked into @p program, or NULL. Sources are only
+ * kept while the GPU timing mode is on (for its gpu_hot_*.frag dumps).
+ */
+const char *webos_shader_cache_fragment_source(unsigned int program);
+
 #ifdef __cplusplus
 }
 #endif

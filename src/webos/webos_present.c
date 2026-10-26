@@ -91,8 +91,18 @@ void ac_SDL_GL_SwapWindow(SDL_Window *window)
     if (s_frames_presented == 0)
         on_first_frame(window);
 
-    make_back_buffer_opaque();
-    SDL_GL_SwapWindow(window);
+    if (webos_gpu_profile_active()) {
+        const double opaque_start = webos_gpu_profile_begin();
+        make_back_buffer_opaque();
+        webos_gpu_profile_end_opaque_pass(opaque_start);
+        const double swap_start = webos_gpu_profile_begin();
+        SDL_GL_SwapWindow(window);
+        webos_gpu_profile_end_swap(swap_start);
+        webos_gpu_profile_frame_done();
+    } else {
+        make_back_buffer_opaque();
+        SDL_GL_SwapWindow(window);
+    }
     ++s_frames_presented;
 
     if (s_frames_presented % kHeartbeatFrames == 0) {

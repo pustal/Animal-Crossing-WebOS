@@ -68,6 +68,26 @@ void ac_glLinkProgram(GLuint program);
 #define glLinkProgram(program) ac_glLinkProgram(program)
 
 /*
+ * Heavy GL calls routed through webos_gpu_profile.c, which times them when the
+ * GPU timing mode is on (gpuprofile.enable) and otherwise calls straight through.
+ */
+void ac_glDrawArrays(GLenum mode, GLint first, GLsizei count);
+void ac_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void *indices);
+void ac_glClear(GLbitfield mask);
+void ac_glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border,
+                     GLenum format, GLenum type, const void *pixels);
+void ac_glBufferData(GLenum target, GLsizeiptr size, const void *data, GLenum usage);
+void ac_glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels);
+#define glDrawArrays(mode, first, count) ac_glDrawArrays((mode), (first), (count))
+#define glDrawElements(mode, count, type, indices) ac_glDrawElements((mode), (count), (type), (indices))
+#define glClear(mask) ac_glClear(mask)
+#define glTexImage2D(target, level, internalformat, width, height, border, format, type, pixels) \
+    ac_glTexImage2D((target), (level), (internalformat), (width), (height), (border), (format), (type), (pixels))
+#define glBufferData(target, size, data, usage) ac_glBufferData((target), (size), (data), (usage))
+#define glReadPixels(x, y, width, height, format, type, pixels) \
+    ac_glReadPixels((x), (y), (width), (height), (format), (type), (pixels))
+
+/*
  * Buffer swaps routed through webos_present.c, which makes the frame opaque
  * for the TV's compositor (see there). Declared with the struct tag so this
  * header does not need SDL.h.
