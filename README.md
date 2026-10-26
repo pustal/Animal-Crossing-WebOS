@@ -70,6 +70,13 @@ A keyboard uses the PC port's layout, except the camera (T/F/G/H) and Start
 (P), whose PC keys the remote sends. The layout is written to
 `keybindings.ini` on first launch; edit it there if you like.
 
+## Troubleshooting
+
+The app writes `stdout.log` and `stderr.log` to its data folder. To measure
+performance, create an empty file named `profile.enable` there
+(`touch <data folder>/profile.enable`): the next launch writes a frame-time
+report to `stdout.log` every 300 frames. Delete the file to turn it off.
+
 ## Building
 
 You need Linux x86_64 (or a Linux VM/container on macOS), the webosbrew

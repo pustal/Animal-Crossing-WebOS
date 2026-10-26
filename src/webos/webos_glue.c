@@ -4,7 +4,8 @@
  *
  * - android_bootstrap(): picks the data folder, creates the port's folders,
  *   links shaders/ to the copy shipped in the app, redirects logs, installs a
- *   crash logger and prepares the remote control (hints, keyboard layout).
+ *   crash logger, turns on the frame profiler if asked and prepares the
+ *   remote control (hints, keyboard layout).
  * - The Android touch overlay's input variables, which pc_pad.c reads; a TV
  *   has no touch overlay, so they stay zero.
  */
@@ -146,6 +147,27 @@ static void install_crash_logger(void)
         signal(fatal[i], on_fatal_signal);
 }
 
+/* ---- Frame profiler switch ---- */
+
+/** The port's frame profiler (pc_profiler.c), normally enabled with --profile. */
+extern int g_pc_profile_enabled;
+extern int g_pc_profile_interval;
+
+/** Marker file in the data folder that turns the profiler on (webOS cannot pass arguments). */
+static const char *const kProfileMarker = "profile.enable";
+/** Report every 5 s at 60 fps: readable in stdout.log without flooding it. */
+static const int kProfileInterval = 300;
+
+static void enable_profiler_if_requested(void)
+{
+    struct stat info;
+    if (stat(kProfileMarker, &info) != 0)
+        return;
+    g_pc_profile_enabled  = 1;
+    g_pc_profile_interval = kProfileInterval;
+    printf("[AC/webOS] frame profiler on (%s found), report every %d frames\n", kProfileMarker, kProfileInterval);
+}
+
 void android_bootstrap(void)
 {
     const char *base = enter_data_dir();
@@ -165,6 +187,7 @@ void android_bootstrap(void)
     setvbuf(stderr, NULL, _IONBF, 0);
 
     install_crash_logger();
+    enable_profiler_if_requested();
     webos_remote_set_hints();          /* before pc_main.c calls SDL_Init */
     webos_write_keybindings_once();    /* before pc_main.c loads keybindings.ini */
 
