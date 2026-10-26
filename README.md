@@ -25,7 +25,7 @@ renderer path) for webOS, with a small webOS layer in `src/webos/`:
 | `webos_tev_specialize.c` | Rewrites each of the port's TEV shader variants into straight-line code. The TV's Mali driver does not fold the port's generic shader, which made dialogue screens run at 6-10 fps; `tools/tev_equivalence/run.sh` checks the rewritten shaders render identically |
 | `webos_gpu_profile.c` | Optional GPU timing mode for finding expensive draws (see Troubleshooting) |
 | `webos_overlay.c` | In-game panel with the upload page address and PIN (remote key 1) |
-| `transfer/` | The upload page server (cpp-httplib), setup screen, USB drive and root detection, texture pack placement; the page itself is `web/index.html` |
+| `transfer/` | The upload page server (cpp-httplib), setup screen, USB drive and root detection, texture pack placement; the page itself is `web/index.html`. Built as `lib/libacwebos_transfer.so` with its own private C++ runtime, because the game replaces the global `operator new` with its own heap allocator |
 | `webos_remote.c` | TV remote controls (below); Back opens the pause menu instead of closing the app |
 | `glad/gl.h` | Replaces the desktop GL loader: maps the few desktop-only GL calls to ES ones and routes shader calls and buffer swaps to the files above |
 | `webos_forced_decls.h`, `webos_bstring.c` | Reconcile the decomp's own libc declarations with the TV's glibc |

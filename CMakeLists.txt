@@ -10,7 +10,7 @@
 #   cmake --build build-webos && cmake --build build-webos --target webos-package
 
 cmake_minimum_required(VERSION 3.21)
-project(AnimalCrossingWebOS VERSION 0.2.0 LANGUAGES C CXX)
+project(AnimalCrossingWebOS VERSION 0.2.1 LANGUAGES C CXX)
 
 set(AC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${AC_ROOT}/cmake")
@@ -162,9 +162,6 @@ set_source_files_properties(${PC_C_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
 set_source_files_properties("${DECOMP_ROOT}/pc/src/pc_stubs_cpp.cpp" PROPERTIES COMPILE_OPTIONS "-w;-fpermissive")
 
 # ---------------------------------------------------------------------------
-# The executable
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
 # The webOS layer (src/webos/): platform glue in C, upload page in C++
 # ---------------------------------------------------------------------------
 set(WEBOS_C_SOURCES
@@ -185,7 +182,9 @@ set(WEBOS_CXX_SOURCES
     src/webos/transfer/UsbAccess.cpp
     src/webos/transfer/webos_transfer.cpp)
 
-# The upload page ships inside the binary.
+find_package(Threads REQUIRED)
+
+# The upload page ships inside the library.
 set(AC_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 add_custom_command(
     OUTPUT "${AC_GENERATED_DIR}/WebPage.generated.h"
@@ -199,6 +198,32 @@ add_custom_command(
     COMMENT "Embedding the upload page")
 
 # ---------------------------------------------------------------------------
+# The upload page: a separate shared library
+#
+# The game's JSystem (JKRHeap.cpp) defines the global operator new/new[] on
+# top of its own heaps. In the executable that replaces the standard
+# allocator for all C++ code, so ordinary C++ (std::string, threads, the HTTP
+# server) cannot live there. The library carries its own static C++ runtime
+# with every symbol hidden and bound locally (-fvisibility=hidden,
+# --exclude-libs,ALL, -Bsymbolic), so its allocations always use the normal
+# heap; only the C functions in webos_transfer.h are exported.
+# ---------------------------------------------------------------------------
+add_library(acwebos_transfer SHARED ${WEBOS_CXX_SOURCES} "${AC_GENERATED_DIR}/WebPage.generated.h")
+set_target_properties(acwebos_transfer PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    BUILD_WITH_INSTALL_RPATH ON
+    INSTALL_RPATH "\$ORIGIN")
+target_compile_options(acwebos_transfer PRIVATE -Wall -Wextra)
+target_compile_definitions(acwebos_transfer PRIVATE "ACWEBOS_VERSION=\"${PROJECT_VERSION}\"")
+target_include_directories(acwebos_transfer PRIVATE "${AC_GENERATED_DIR}" "${AC_ROOT}/src/webos" "${AC_ROOT}/src/webos/transfer")
+# cpp-httplib (MIT, single header) as a system header: its warnings are not ours.
+target_include_directories(acwebos_transfer SYSTEM PRIVATE "${AC_ROOT}/third_party/cpp-httplib")
+target_link_libraries(acwebos_transfer PRIVATE SDL2::SDL2 Threads::Threads)
+target_link_options(acwebos_transfer PRIVATE
+    -static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL -Wl,-Bsymbolic -Wl,--no-undefined)
+
+# ---------------------------------------------------------------------------
 # The executable
 # ---------------------------------------------------------------------------
 add_executable(AnimalCrossing
@@ -207,17 +232,10 @@ add_executable(AnimalCrossing
     ${GAME_C_SOURCES}
     ${GAME_CXX_SOURCES}
     src/webos/webos_bstring.c
-    ${WEBOS_C_SOURCES}
-    ${WEBOS_CXX_SOURCES}
-    "${AC_GENERATED_DIR}/WebPage.generated.h")
+    ${WEBOS_C_SOURCES})
 
 # Our own code is held to stricter warnings than the decomp.
-set_source_files_properties(${WEBOS_C_SOURCES} ${WEBOS_CXX_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
-set_source_files_properties(src/webos/transfer/webos_transfer.cpp PROPERTIES
-    COMPILE_DEFINITIONS "ACWEBOS_VERSION=\"${PROJECT_VERSION}\"")
-target_include_directories(AnimalCrossing PRIVATE "${AC_GENERATED_DIR}" "${AC_ROOT}/src/webos/transfer")
-# cpp-httplib (MIT, single header) as a system header: its warnings are not ours.
-target_include_directories(AnimalCrossing SYSTEM PRIVATE "${AC_ROOT}/third_party/cpp-httplib")
+set_source_files_properties(${WEBOS_C_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 
 # The port includes both <SDL.h> and <SDL2/SDL_x.h>: both must resolve to the
 # bundled SDL, not to the older SDL 2 headers in the toolchain's sysroot.
@@ -225,8 +243,7 @@ get_target_property(_ac_sdl_include SDL2::SDL2 INTERFACE_INCLUDE_DIRECTORIES)
 get_filename_component(_ac_sdl_include_parent "${_ac_sdl_include}" DIRECTORY)
 target_include_directories(AnimalCrossing BEFORE PRIVATE "${_ac_sdl_include_parent}")
 
-find_package(Threads REQUIRED)
-target_link_libraries(AnimalCrossing PRIVATE SDL2::SDL2 ACWEBOS::GLESv2 Threads::Threads rt m ${CMAKE_DL_LIBS})
+target_link_libraries(AnimalCrossing PRIVATE acwebos_transfer SDL2::SDL2 ACWEBOS::GLESv2 Threads::Threads rt m ${CMAKE_DL_LIBS})
 # The TV's C++ runtime is older than the toolchain's; carry our own.
 target_link_options(AnimalCrossing PRIVATE -static-libstdc++ -static-libgcc)
 set_target_properties(AnimalCrossing PROPERTIES

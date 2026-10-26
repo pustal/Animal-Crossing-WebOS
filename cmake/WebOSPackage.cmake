@@ -4,6 +4,7 @@
 #   appinfo.json, icons
 #   bin/AnimalCrossing           the game (stripped)
 #   lib/libSDL2-2.0.so.0         bundled SDL-webOS
+#   lib/libacwebos_transfer.so   the upload page (C++, kept out of the game executable)
 #   share/shaders/               the port's GLSL sources (rewritten to ES at run time)
 #   LICENSE, THIRD_PARTY_NOTICES.md, LICENSE-ACGC-Android-Port.txt, LICENSE-cpp-httplib.txt
 # then builds dist/<id>_<version>_arm.ipk with ares-package (@webos-tools/cli)
@@ -32,11 +33,13 @@ add_custom_target(webos-stage
     COMMAND "${CMAKE_STRIP}" --strip-unneeded "${AC_IPK_STAGE}/bin/AnimalCrossing"
     COMMAND "${CMAKE_COMMAND}" -E copy "${AC_SDL2_RUNTIME_LIBRARY}" "${AC_IPK_STAGE}/lib/"
     COMMAND "${CMAKE_STRIP}" --strip-unneeded "${AC_IPK_STAGE}/lib/libSDL2-2.0.so.0"
+    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:acwebos_transfer>" "${AC_IPK_STAGE}/lib/"
+    COMMAND "${CMAKE_STRIP}" --strip-unneeded "${AC_IPK_STAGE}/lib/$<TARGET_FILE_NAME:acwebos_transfer>"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${DECOMP_ROOT}/pc/shaders" "${AC_IPK_STAGE}/share/shaders"
     COMMAND "${CMAKE_COMMAND}" -E copy "${AC_ROOT}/LICENSE" "${AC_ROOT}/THIRD_PARTY_NOTICES.md" "${AC_IPK_STAGE}/"
     COMMAND "${CMAKE_COMMAND}" -E copy "${DECOMP_ROOT}/LICENSE" "${AC_IPK_STAGE}/LICENSE-ACGC-Android-Port.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy "${AC_ROOT}/third_party/cpp-httplib/LICENSE" "${AC_IPK_STAGE}/LICENSE-cpp-httplib.txt"
-    DEPENDS AnimalCrossing
+    DEPENDS AnimalCrossing acwebos_transfer
     COMMENT "Staging the IPK contents in ${AC_IPK_STAGE}"
     VERBATIM)
 
