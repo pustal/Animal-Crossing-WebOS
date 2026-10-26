@@ -7,8 +7,9 @@
  * each takes 150-230 ms, about 30 s in total (the ES3-WebOS-probe measured
  * reloading a saved program binary at under 1 ms). So:
  *
- * - glShaderSource: the port's desktop GLSL 3.30 is rewritten to GLSL ES 3.00
- *   and the source's hash is remembered per shader object.
+ * - glShaderSource: the port's desktop GLSL 3.30 is rewritten to GLSL ES 3.00,
+ *   TEV variants get a straight-line main() (webos_tev_specialize.c), and the
+ *   final source's hash is remembered per shader object.
  * - glCompileShader is deferred: the shader is only marked pending, and
  *   glGetShaderiv(GL_COMPILE_STATUS) reports success for pending shaders.
  * - glLinkProgram first looks for shader_binaries/<key>.bin, where the key
@@ -21,6 +22,7 @@
  * port) instead of a compile error. glad/gl.h routes the port's calls here.
  */
 #include "webos_platform.h"
+#include "webos_tev_specialize.h"
 
 #include <GLES3/gl3.h>
 #include <errno.h>
@@ -35,7 +37,7 @@ static const char *const kCacheDir = "shader_binaries";
 /** File header magic, "ACPB". */
 static const uint32_t kCacheMagic = 0x41435042u;
 /** Bump when the rewrite or key changes so old binaries are not reused. */
-static const uint32_t kCacheVersion = 1;
+static const uint32_t kCacheVersion = 2;
 
 /** Header that replaces the "#version 330 core" line. */
 static const char kEsHeader[] = "#version 300 es\n"
@@ -166,6 +168,13 @@ int ac_glShaderSource(GLuint shader, GLsizei count, const GLchar *const *string,
     free(joined);
     if (!rewritten)
         return 0;
+
+    /* TEV variants: replace the generic main() with straight-line code (webos_tev_specialize.c). */
+    char *specialised = webos_tev_specialize(rewritten);
+    if (specialised) {
+        free(rewritten);
+        rewritten = specialised;
+    }
 
     const GLchar *sources[1] = { rewritten };
     glShaderSource(shader, 1, sources, NULL);
