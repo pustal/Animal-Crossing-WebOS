@@ -97,6 +97,8 @@ extern "C" int webos_transfer_overlay_text(char *buffer, size_t size)
     }
     text += "\nHelp and updates: github.com/pustal/Animal-Crossing-WebOS";
     ++lines;
+    text += "\nApp icon by x65943 (GBAtemp)";
+    ++lines;
     text += "\nPress 1 (remote) or LB (controller) to show or hide";
     ++lines;
 
