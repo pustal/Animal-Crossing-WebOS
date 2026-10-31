@@ -132,7 +132,7 @@ downloads the SDL-webOS release it bundles.
 - [flyngmt/ACGC-PC-Port](https://github.com/flyngmt/ACGC-PC-Port): the PC port (MIT)
 - [zwaetschge/ACGC-Android-Port](https://github.com/zwaetschge/ACGC-Android-Port): the OpenGL ES 3 / mobile path this build uses
 - [webosbrew](https://www.webosbrew.org/): toolchain, SDL-webOS and the Homebrew Channel
-- App icon by x65943 on [GBAtemp](https://gbatemp.net)
+- App icon by x65943 on [GBAtemp](https://gbatemp.net); its lettering is set in [Fredoka](https://github.com/hafontia/Fredoka-One) (SIL OFL 1.1) by `tools/add_icon_title.py`
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Animal Crossing is a
 trademark of Nintendo. This project is not affiliated with or endorsed by

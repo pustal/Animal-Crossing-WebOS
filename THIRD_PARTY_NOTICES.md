@@ -11,6 +11,7 @@
 | [font8x8](https://github.com/dhepper/font8x8) by Daniel Hepper | setup screen and overlay font (`src/webos/transfer/BitmapFont.cpp`) | Public domain |
 | [bcdec](https://github.com/iOrange/bcdec) by Sergii Kudlai | BC1-BC7 texture decoding (`third_party/bcdec/`) | MIT or Unlicense (`third_party/bcdec/LICENSE`) |
 | Khronos OpenGL ES 3 and KHR headers | `third_party/khronos/` (build only) | MIT (in each header) |
+| [Fredoka](https://github.com/hafontia/Fredoka-One) by The Fredoka Project Authors | the lettering in the app icons (`webos/icon.png`, `webos/largeIcon.png`); the font itself is in `tools/fonts/` (build only) | SIL OFL 1.1 (`tools/fonts/Fredoka-OFL.txt`) |
 
 Only the components above that are compiled into the app are distributed in
 the IPK. The Android port's translation tools (pyjkernel, GPL-3.0) and Android
