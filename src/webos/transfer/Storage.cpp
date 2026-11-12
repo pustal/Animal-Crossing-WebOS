@@ -119,8 +119,7 @@ std::string Storage::FindDiscImage() const
     std::error_code ec;
     for (const fs::directory_entry &entry : fs::directory_iterator(PathFor("rom"), ec)) {
         const std::string name = entry.path().filename().string();
-        if (entry.is_regular_file(ec)
-            && (EndsWithNoCase(name, ".iso") || EndsWithNoCase(name, ".gcm") || EndsWithNoCase(name, ".ciso")))
+        if (entry.is_regular_file(ec) && IsDiscImageName(name))
             return "rom/" + name;
     }
     return {};
@@ -131,6 +130,31 @@ std::string Storage::DiscFileName(const DiscInfo &info)
     if (info.format == "ciso")
         return "game.ciso";
     return (info.gameId.empty() ? std::string("game") : info.gameId) + ".iso";
+}
+
+bool Storage::IsDiscImageName(const std::string &name)
+{
+    return EndsWithNoCase(name, ".iso") || EndsWithNoCase(name, ".gcm") || EndsWithNoCase(name, ".ciso");
+}
+
+std::vector<std::string> Storage::InternalDiscImages() const { return DiscImagesIn(PathFor("rom")); }
+
+std::vector<std::string> Storage::DiscImagesIn(const std::string &romDir)
+{
+    std::vector<std::string> images;
+    std::error_code ec;
+    for (const fs::directory_entry &entry : fs::directory_iterator(romDir, ec)) {
+        const std::string path = entry.path().string();
+        if (!IsDiscImageName(entry.path().filename().string()) || entry.is_symlink(ec))
+            continue;
+        // A bind mount of a drive's image sits on another device than rom/ itself.
+        struct stat file {}, folder {};
+        if (lstat(path.c_str(), &file) != 0 || !S_ISREG(file.st_mode) || stat(romDir.c_str(), &folder) != 0
+            || file.st_dev != folder.st_dev || file.st_size == 0)
+            continue;
+        images.push_back(path);
+    }
+    return images;
 }
 
 std::string Storage::CardDir(char card)

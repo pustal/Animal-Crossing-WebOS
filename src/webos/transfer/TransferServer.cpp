@@ -5,7 +5,9 @@
  * HTTP API (all /api routes need the PIN, as an "X-Pin" header or ?pin=):
  *   GET  /                          the upload page (web/index.html, embedded at build time)
  *   GET  /api/status                JSON: disc, space, root, USB drives, texture pack
- *   PUT  /api/disc                  raw body = disc image (.iso/.gcm/.ciso), streamed to rom/
+ *   PUT  /api/disc?drive=<mount|internal>   raw body = disc image (.iso/.gcm/.ciso), streamed to rom/
+ *                                   or to "Animal Crossing/rom" on a USB drive; other copies are removed
+ *   POST /api/disc/move?drive=<mount|internal>   moves the disc image there
  *   GET  /api/saves                 JSON list of memory-card saves
  *   GET  /api/saves/:card/:name     download one save (card = a or b)
  *   PUT  /api/saves/:card/:name     raw body = save (staged for the next launch while playing)
@@ -168,6 +170,113 @@ bool IsAllowedTexturePath(const std::string &path)
     return path.size() > 4 && path.compare(path.size() - 4, 4, ".dds") == 0;
 }
 
+/** Where the disc image is stored: in rom/ or on a drive. */
+struct DiscLocation {
+    std::string path;  ///< Absolute path of the image, empty when there is none.
+    std::string drive; ///< Mount point of its drive, empty for the TV storage.
+    std::uint64_t size = 0;
+};
+
+/**
+ * The disc image as stored: one in rom/ first (the game prefers it, see
+ * UsbAccess::PlaceDiscImage), else the first drive's. Not the link or bind
+ * mount in rom/ that points at a drive's.
+ */
+DiscLocation FindStoredDisc(const Storage &storage, UsbAccess &usb)
+{
+    DiscLocation location;
+    const std::vector<std::string> internal = storage.InternalDiscImages();
+    if (!internal.empty()) {
+        location.path = internal.front();
+        location.size = Storage::FileSize(location.path);
+        return location;
+    }
+    for (const UsbDrive &drive : usb.ListDrives()) {
+        if (drive.discFile.empty())
+            continue;
+        location.path  = drive.mountPoint + "/" + UsbAccess::kDiscFolder + "/" + drive.discFile;
+        location.drive = drive.mountPoint;
+        location.size  = drive.discBytes;
+        return location;
+    }
+    return location;
+}
+
+/** Where a disc image upload or move goes. */
+struct DiscTarget {
+    bool usb = false;
+    std::string drive;  ///< Mount point, for a USB drive.
+    std::string folder; ///< Absolute folder the image goes in.
+    std::uint64_t free = 0;
+    bool direct = true; ///< The app writes there itself (else root moves it there).
+};
+
+/**
+ * Reads the "drive" parameter (a USB mount point, or "internal", the
+ * default) into @p target. Answers @p res and returns false when it is not
+ * usable.
+ */
+bool ParseDiscTarget(const httplib::Request &req, Storage &storage, UsbAccess &usb, DiscTarget *target, httplib::Response &res)
+{
+    const std::string drive = req.has_param("drive") ? req.get_param_value("drive") : std::string(kInternal);
+    if (drive == kInternal) {
+        target->folder = storage.PathFor("rom");
+        target->free   = storage.FreeBytes();
+        return true;
+    }
+    for (const UsbDrive &found : usb.ListDrives()) {
+        if (found.mountPoint != drive)
+            continue;
+        target->usb    = true;
+        target->drive  = drive;
+        target->folder = drive + "/" + UsbAccess::kDiscFolder;
+        target->direct = found.writable;
+        target->free   = found.spaceKnown ? found.freeBytes : 0;
+        if (!found.writable && !usb.Root().Available()) {
+            Fail(res, 403, "The app cannot write to this USB drive and has no root access.");
+            return false;
+        }
+        if (!found.spaceKnown) {
+            Fail(res, 507, "The free space on this USB drive could not be read.");
+            return false;
+        }
+        return true;
+    }
+    Fail(res, 400, "That USB drive is not connected.");
+    return false;
+}
+
+/**
+ * Removes every stored disc image except @p keep: in rom/ (with the links and
+ * bind mounts there) and in each drive's "Animal Crossing/rom", so exactly
+ * one copy is left and the game cannot pick an older one first.
+ */
+void RemoveOtherDiscCopies(Storage &storage, UsbAccess &usb, const std::string &keep)
+{
+    usb.ReleaseDiscLinks(storage.Root());
+    for (const std::string &image : storage.InternalDiscImages()) {
+        if (image != keep)
+            usb.RemoveFile(image);
+    }
+    for (const UsbDrive &drive : usb.ListDrives()) {
+        if (drive.discFile.empty())
+            continue;
+        const std::string image = drive.mountPoint + "/" + UsbAccess::kDiscFolder + "/" + drive.discFile;
+        if (image != keep)
+            usb.RemoveFile(image);
+    }
+}
+
+const char *DiscSourceName(DiscSource source)
+{
+    switch (source) {
+        case DiscSource::Internal: return "internal";
+        case DiscSource::UsbLink: return "usb";
+        case DiscSource::UsbMount: return "usb-mount";
+        default: return "none";
+    }
+}
+
 const char *PackSourceName(PackSource source)
 {
     switch (source) {
@@ -285,17 +394,21 @@ void TransferServer::RegisterRoutes()
 
     server.Get("/api/status", [this](const httplib::Request &, httplib::Response &res) {
         const TransferStatus status = Snapshot();
-        const std::string disc      = storage_.FindDiscImage();
-        const DiscInfo info         = disc.empty() ? DiscInfo{} : Storage::InspectDisc(storage_.PathFor(disc));
+        const DiscLocation disc     = FindStoredDisc(storage_, usb_);
+        const DiscInfo info         = disc.path.empty() ? DiscInfo{} : Storage::InspectDisc(disc.path);
         const RootStatus root       = usb_.Root();
 
         std::ostringstream json;
         json << "{\"version\":\"" << JsonEscape(version_) << "\""
              << ",\"mode\":\"" << (setupMode_.load() ? "setup" : "game") << "\""
              << ",\"freeBytes\":" << storage_.FreeBytes() << ",\"safetyMarginBytes\":" << Storage::kSafetyMarginBytes
-             << ",\"disc\":{\"present\":" << JsonBool(!disc.empty()) << ",\"file\":\"" << JsonEscape(disc) << "\""
-             << ",\"size\":" << (disc.empty() ? 0 : Storage::FileSize(storage_.PathFor(disc)))
-             << ",\"gameId\":\"" << JsonEscape(info.gameId) << "\"}"
+             << ",\"disc\":{\"present\":" << JsonBool(!disc.path.empty()) << ",\"file\":\""
+             << JsonEscape(fs::path(disc.path).filename().string()) << "\""
+             << ",\"size\":" << disc.size << ",\"gameId\":\"" << JsonEscape(info.gameId) << "\""
+             << ",\"location\":\"" << (disc.path.empty() ? "none" : disc.drive.empty() ? "internal" : "usb") << "\""
+             << ",\"drive\":\"" << JsonEscape(disc.drive) << "\""
+             << ",\"source\":\"" << DiscSourceName(usb_.ActiveDiscSource()) << "\""
+             << ",\"folder\":\"" << UsbAccess::kDiscFolder << "\"}"
              << ",\"restartPending\":" << JsonBool(status.restartPending)
              << ",\"upload\":{\"active\":" << JsonBool(status.uploading) << ",\"received\":" << status.receivedBytes
              << ",\"expected\":" << status.expectedBytes << "}"
@@ -310,7 +423,8 @@ void TransferServer::RegisterRoutes()
                  << JsonEscape(drive.label) << "\",\"spaceKnown\":" << JsonBool(drive.spaceKnown)
                  << ",\"freeBytes\":" << drive.freeBytes << ",\"totalBytes\":" << drive.totalBytes
                  << ",\"readable\":" << JsonBool(drive.readable) << ",\"writable\":" << JsonBool(drive.writable)
-                 << ",\"packExists\":" << JsonBool(drive.packExists) << ",\"packFiles\":" << drive.packFiles << "}";
+                 << ",\"packExists\":" << JsonBool(drive.packExists) << ",\"packFiles\":" << drive.packFiles
+                 << ",\"discFile\":\"" << JsonEscape(drive.discFile) << "\",\"discBytes\":" << drive.discBytes << "}";
             first = false;
         }
         json << "]}";
@@ -324,17 +438,33 @@ void TransferServer::RegisterRoutes()
             return Fail(res, 411, "The upload must state its size (Content-Length).");
         if (expected > Storage::kMaxDiscBytes)
             return Fail(res, 413, "That is larger than a GameCube disc; refusing " + HumanBytes(expected) + ".");
-        if (discUploadInProgress_.exchange(true))
-            return Fail(res, 409, "Another disc upload is already running.");
-        const std::unique_ptr<std::atomic<bool>, void (*)(std::atomic<bool> *)> uploadGuard(
-            &discUploadInProgress_, [](std::atomic<bool> *flag) { flag->store(false); });
 
+        // Where it goes: rom/ on the TV, or "Animal Crossing/rom" on a USB drive.
+        DiscTarget target;
+        if (!ParseDiscTarget(req, storage_, usb_, &target, res))
+            return;
         const std::uint64_t needed = expected + Storage::kSafetyMarginBytes;
-        const std::uint64_t free   = storage_.FreeBytes();
-        if (needed > free) {
-            return Fail(res, 507, "Not enough space on the TV: this file needs " + HumanBytes(needed)
-                                      + " (including a safety margin), " + HumanBytes(free) + " is free.");
+        if (needed > target.free) {
+            return Fail(res, 507, std::string("Not enough space on the ") + (target.usb ? "USB drive" : "TV") + ": this file needs "
+                                      + HumanBytes(needed) + " (including a safety margin), " + HumanBytes(target.free) + " is free.");
         }
+        // A drive the app cannot write to: the upload waits in the data folder until root moves it.
+        const bool staged = target.usb && !target.direct;
+        if (staged && needed > storage_.FreeBytes()) {
+            return Fail(res, 507, "The app writes to this USB drive through root, so the upload first goes to the TV, which has "
+                                      + HumanBytes(storage_.FreeBytes()) + " free; it needs " + HumanBytes(needed) + ".");
+        }
+
+        if (discBusy_.exchange(true))
+            return Fail(res, 409, "Another disc upload or move is already running.");
+        const std::unique_ptr<std::atomic<bool>, void (*)(std::atomic<bool> *)> busyGuard(
+            &discBusy_, [](std::atomic<bool> *flag) { flag->store(false); });
+
+        std::error_code ec;
+        const std::string folderError = target.usb ? usb_.CreateDriveFolder(target.drive, UsbAccess::kDiscFolder) : std::string();
+        if (!folderError.empty())
+            return Fail(res, 500, folderError);
+        fs::create_directories(storage_.PathFor("rom"), ec);
 
         {
             std::lock_guard<std::mutex> lock(statusMutex_);
@@ -342,11 +472,9 @@ void TransferServer::RegisterRoutes()
             status_.receivedBytes = 0;
             status_.expectedBytes = expected;
         }
-        PublishEvent("Receiving the disc image...");
+        PublishEvent(std::string("Receiving the disc image") + (target.usb ? " for the USB drive" : "") + "...");
 
-        std::error_code ec;
-        fs::create_directories(storage_.PathFor("rom"), ec);
-        const std::string partPath = storage_.PathFor("rom/upload.part");
+        const std::string partPath = (staged || !target.usb ? storage_.PathFor("rom") : target.folder) + "/upload.part";
         const std::int64_t written = StreamBodyToFile(reader, partPath, expected, [this](std::uint64_t total) {
             std::lock_guard<std::mutex> lock(statusMutex_);
             status_.receivedBytes = total;
@@ -368,33 +496,109 @@ void TransferServer::RegisterRoutes()
             return Fail(res, 415, "That file is not a GameCube disc image (.iso, .gcm or .ciso).");
         }
 
-        // Replace any previous image so the game cannot pick an older one first.
-        for (const fs::directory_entry &entry : fs::directory_iterator(storage_.PathFor("rom"), ec)) {
-            const std::string name = entry.path().filename().string();
-            if (name != "upload.part" && entry.is_regular_file(ec))
-                fs::remove(entry.path(), ec);
-        }
-        const std::string destination = storage_.PathFor("rom/" + Storage::DiscFileName(info));
-        fs::rename(partPath, destination, ec);
-        if (ec) {
+        // Into place, then every other copy goes, so the game cannot pick an older one first.
+        const std::string destination = target.folder + "/" + Storage::DiscFileName(info);
+        if (!target.usb)
+            usb_.ReleaseDiscLinks(storage_.Root()); // a link or bind mount may hold the name
+        const bool placed = staged ? usb_.MoveWithRoot(partPath, destination).empty() : usb_.RenameFile(partPath, destination);
+        if (!placed) {
             fs::remove(partPath, ec);
             return Fail(res, 500, "Could not move the file into place.");
         }
+        RemoveOtherDiscCopies(storage_, usb_, destination);
 
         const bool setup = setupMode_.load();
-        {
+        if (setup) {
+            // A drive's image is linked into rom/ now, so the game can start with it.
+            usb_.PlaceDiscImage(storage_.Root());
             std::lock_guard<std::mutex> lock(statusMutex_);
-            if (setup)
-                status_.discReady = true;
+            status_.discReady = !storage_.FindDiscImage().empty();
         }
         MarkRestartPending();
-        std::string message = "Disc image installed";
+        std::string message = std::string("Disc image installed") + (target.usb ? " on the USB drive" : "");
         if (!info.gameId.empty())
             message += " (" + info.gameId + ")";
         if (!info.gameId.empty() && info.gameId != "GAFE01")
             message += ". Note: this port is made for the US version, GAFE01";
         PublishEvent(message + ".");
         res.set_content(setup ? "installed" : "staged", kTextType);
+    });
+
+    server.Post("/api/disc/move", [this](const httplib::Request &req, httplib::Response &res) {
+        const DiscLocation source = FindStoredDisc(storage_, usb_);
+        if (source.path.empty())
+            return Fail(res, 404, "There is no disc image to move.");
+
+        DiscTarget target;
+        if (!ParseDiscTarget(req, storage_, usb_, &target, res))
+            return;
+        if (target.usb == !source.drive.empty() && target.drive == source.drive)
+            return Fail(res, 400, std::string("The disc image is already on ") + (target.usb ? "that USB drive." : "the TV."));
+        const std::uint64_t needed = source.size + Storage::kSafetyMarginBytes;
+        if (needed > target.free) {
+            return Fail(res, 507, "Not enough space there: the disc image needs " + HumanBytes(needed)
+                                      + " (including a safety margin), " + HumanBytes(target.free) + " is free.");
+        }
+
+        if (discBusy_.exchange(true))
+            return Fail(res, 409, "Another disc upload or move is already running.");
+        const std::unique_ptr<std::atomic<bool>, void (*)(std::atomic<bool> *)> busyGuard(
+            &discBusy_, [](std::atomic<bool> *flag) { flag->store(false); });
+
+        std::error_code ec;
+        const std::string folderError = target.usb ? usb_.CreateDriveFolder(target.drive, UsbAccess::kDiscFolder) : std::string();
+        if (!folderError.empty())
+            return Fail(res, 500, folderError);
+        fs::create_directories(target.folder, ec);
+
+        const std::string where       = target.usb ? "the USB drive" : "the TV";
+        const std::string name        = fs::path(source.path).filename().string();
+        const std::string destination = target.folder + "/" + name;
+        const std::string partPath    = destination + ".part";
+        {
+            std::lock_guard<std::mutex> lock(statusMutex_);
+            status_.uploading     = true;
+            status_.receivedBytes = 0;
+            status_.expectedBytes = source.size;
+        }
+        PublishEvent("Moving the disc image to " + where + "...");
+
+        // Copy, then remove the original: the TV and a drive are different file systems.
+        const std::string copyError = usb_.CopyFile(source.path, partPath, [this](std::uint64_t total) {
+            std::lock_guard<std::mutex> lock(statusMutex_);
+            status_.receivedBytes = total;
+        });
+        {
+            std::lock_guard<std::mutex> lock(statusMutex_);
+            status_.uploading = false;
+        }
+        // A copy root made may not be readable to the app (an unreadable drive): only a readable one is size-checked.
+        const std::uint64_t copiedSize = Storage::FileSize(partPath);
+        if (!copyError.empty() || (copiedSize != 0 && copiedSize != source.size)) {
+            usb_.RemoveFile(partPath);
+            PublishEvent("Could not move the disc image.");
+            return Fail(res, 500, (copyError.empty() ? std::string("The copy came out the wrong size.") : copyError)
+                                      + " The original is untouched.");
+        }
+        if (!target.usb)
+            usb_.ReleaseDiscLinks(storage_.Root()); // a link or bind mount may hold the name
+        if (!usb_.RenameFile(partPath, destination)) {
+            usb_.RemoveFile(partPath);
+            return Fail(res, 500, "Could not move the copy into place. The original is untouched.");
+        }
+        if (!usb_.RemoveFile(source.path)) {
+            // Keep exactly one copy: the original stays, the new one goes.
+            usb_.RemoveFile(destination);
+            return Fail(res, 500, "Could not remove the original disc image, so it was left where it was.");
+        }
+        usb_.ReleaseDiscLinks(storage_.Root()); // links to where it was
+
+        const bool setup = setupMode_.load();
+        if (setup)
+            usb_.PlaceDiscImage(storage_.Root());
+        MarkRestartPending();
+        PublishEvent("Disc image moved to " + where + ".");
+        res.set_content(setup ? "moved" : "staged", kTextType);
     });
 
     // ---- Saves ----

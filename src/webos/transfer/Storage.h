@@ -79,6 +79,19 @@ public:
     /** File name a disc image with @p info is stored under in rom/. */
     static std::string DiscFileName(const DiscInfo &info);
 
+    /** Whether @p name is a disc image's file name (.iso, .gcm or .ciso, any case), as the port's pc_disc.c accepts. */
+    static bool IsDiscImageName(const std::string &name);
+
+    /**
+     * The disc image files stored in rom/ itself: regular files, not the
+     * links or bind mounts UsbAccess::PlaceDiscImage() makes for a drive's.
+     * @return Absolute paths.
+     */
+    std::vector<std::string> InternalDiscImages() const;
+
+    /** InternalDiscImages() for the rom folder at @p romDir (absolute). */
+    static std::vector<std::string> DiscImagesIn(const std::string &romDir);
+
     /** The saves on both memory cards. */
     std::vector<SaveFile> ListSaves() const;
 

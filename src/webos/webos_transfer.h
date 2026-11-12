@@ -25,7 +25,8 @@ extern "C" {
 /**
  * Called by android_bootstrap() once it is in the data folder, before the
  * game starts: applies files staged during the last session, checks root
- * access, points texture_pack/ at a USB drive's pack, and starts the upload
+ * access, points texture_pack/ at a USB drive's pack and rom/ at a USB
+ * drive's disc image (when the TV storage has none), and starts the upload
  * server. If no disc image is installed it shows the setup screen until one
  * arrives; if the player leaves that screen, the process exits.
  */

@@ -5,6 +5,8 @@
  */
 #include "UsbAccess.h"
 
+#include "Storage.h"
+
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -14,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -385,6 +388,7 @@ std::vector<UsbDrive> UsbAccess::ListDrives()
                     countCache_.push_back({ mountPoint, drive.packFiles, now + kCountCacheTime });
             }
         }
+        drive.discFile = FindDriveDisc(mountPoint, &drive.discBytes);
         drives.push_back(drive);
     }
     return drives;
@@ -493,6 +497,220 @@ void UsbAccess::PlaceTexturePack(const std::string &dataRoot)
     std::lock_guard<std::mutex> lock(mutex_);
     packSource_ = PackSource::None;
     packPath_.clear();
+}
+
+std::string UsbAccess::FindDriveDisc(const std::string &mountPoint, std::uint64_t *size)
+{
+    const std::string folder = mountPoint + "/" + kDiscFolder;
+    std::vector<std::string> names;
+    if (CanRead(mountPoint)) {
+        std::error_code ec;
+        for (const fs::directory_entry &entry : fs::directory_iterator(folder, ec)) {
+            if (entry.is_regular_file(ec))
+                names.push_back(entry.path().filename().string());
+        }
+    }
+    else if (Root().Available()) {
+        std::string listing;
+        if (RunAsRoot("test -d " + ShellQuote(folder) + " && ls -1 " + ShellQuote(folder), &listing)) {
+            std::istringstream lines(listing);
+            std::string line;
+            while (std::getline(lines, line)) {
+                if (!line.empty())
+                    names.push_back(line);
+            }
+        }
+    }
+
+    // GAFE01.iso first, as the game itself prefers it (pc_disc.c), then the first image by name.
+    std::sort(names.begin(), names.end());
+    std::string chosen;
+    for (const std::string &name : names) {
+        if (!Storage::IsDiscImageName(name) || name.size() < 5 || name.compare(name.size() - 5, 5, ".part") == 0)
+            continue;
+        if (name == "GAFE01.iso") {
+            chosen = name;
+            break;
+        }
+        if (chosen.empty())
+            chosen = name;
+    }
+    if (chosen.empty())
+        return {};
+
+    if (size) {
+        const std::string path = folder + "/" + chosen;
+        *size                  = Storage::FileSize(path);
+        std::string bytes;
+        if (*size == 0 && Root().Available() && RunAsRoot("stat -c %s " + ShellQuote(path), &bytes))
+            *size = std::strtoull(bytes.c_str(), nullptr, 10);
+    }
+    return chosen;
+}
+
+void UsbAccess::ReleaseDiscLinks(const std::string &dataRoot)
+{
+    std::lock_guard<std::mutex> placing(discMutex_);
+    const std::string rom = dataRoot + "/rom";
+    std::error_code ec;
+    std::vector<fs::path> entries;
+    for (const fs::directory_entry &entry : fs::directory_iterator(rom, ec))
+        entries.push_back(entry.path());
+    for (const fs::path &entry : entries) {
+        const std::string path = entry.string();
+        if (!Storage::IsDiscImageName(entry.filename().string()))
+            continue;
+        if (IsMountedAt(path)) {
+            // Lazy: detaches it even while the game reads the disc through it.
+            RunAsRoot("umount -l " + ShellQuote(path));
+            fs::remove(path, ec); // the empty file it covered
+        }
+        else if (fs::is_symlink(entry, ec)) {
+            fs::remove(entry, ec);
+        }
+    }
+}
+
+void UsbAccess::PlaceDiscImage(const std::string &dataRoot)
+{
+    const std::string rom = dataRoot + "/rom";
+    std::error_code ec;
+    fs::create_directories(rom, ec);
+
+    // Links and bind mounts from earlier sessions are made again from what the drives hold now.
+    ReleaseDiscLinks(dataRoot);
+
+    std::lock_guard<std::mutex> placing(discMutex_);
+    // Empty files left where a bind mount failed would pass for images.
+    for (const fs::directory_entry &entry : fs::directory_iterator(rom, ec)) {
+        if (Storage::IsDiscImageName(entry.path().filename().string()) && entry.is_regular_file(ec) && entry.file_size(ec) == 0)
+            fs::remove(entry.path(), ec);
+    }
+
+    const std::vector<std::string> internal = Storage::DiscImagesIn(rom);
+    if (!internal.empty()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        discSource_ = DiscSource::Internal;
+        discPath_   = internal.front();
+        std::printf("[AC/webOS] disc image: %s in the data folder\n", discPath_.c_str());
+        return;
+    }
+
+    for (const UsbDrive &drive : ListDrives()) {
+        if (drive.discFile.empty())
+            continue;
+        const std::string source = drive.mountPoint + "/" + kDiscFolder + "/" + drive.discFile;
+        const std::string local  = rom + "/" + drive.discFile;
+
+        if (drive.readable) {
+            fs::create_symlink(source, local, ec);
+            if (!ec) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                discSource_ = DiscSource::UsbLink;
+                discPath_   = source;
+                std::printf("[AC/webOS] disc image: linked to %s\n", source.c_str());
+                return;
+            }
+        }
+        else if (Root().Available()) {
+            // Root binds the file over an empty one, so the app can open it by that name.
+            std::ofstream(local).close();
+            if (RunAsRoot("mount --bind " + ShellQuote(source) + " " + ShellQuote(local)) && Storage::FileSize(local) > 0) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                discSource_ = DiscSource::UsbMount;
+                discPath_   = source;
+                std::printf("[AC/webOS] disc image: bind-mounted %s\n", source.c_str());
+                return;
+            }
+            RunAsRoot("umount " + ShellQuote(local));
+            fs::remove(local, ec);
+            std::printf("[AC/webOS] disc image: could not make %s readable to the app\n", source.c_str());
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    discSource_ = DiscSource::None;
+    discPath_.clear();
+}
+
+DiscSource UsbAccess::ActiveDiscSource() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return discSource_;
+}
+
+std::string UsbAccess::ActiveDiscPath() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return discPath_;
+}
+
+std::string UsbAccess::CreateDriveFolder(const std::string &mountPoint, const std::string &relative)
+{
+    const std::string folder = mountPoint + "/" + relative;
+    std::error_code ec;
+    if (CanWrite(mountPoint)) {
+        fs::create_directories(folder, ec);
+        return ec ? "Could not create the folder: " + ec.message() : std::string();
+    }
+    if (Root().Available()) {
+        return RunAsRoot("mkdir -p " + ShellQuote(folder)) ? std::string() : "Root could not create the folder on the drive.";
+    }
+    return "The app cannot write to this drive and has no root access.";
+}
+
+bool UsbAccess::RemoveFile(const std::string &path)
+{
+    std::error_code ec;
+    if (fs::remove(path, ec) || (!ec && !fs::exists(fs::symlink_status(path, ec))))
+        return true;
+    return Root().Available() && RunAsRoot("rm -f " + ShellQuote(path));
+}
+
+bool UsbAccess::RenameFile(const std::string &from, const std::string &to)
+{
+    std::error_code ec;
+    fs::rename(from, to, ec);
+    if (!ec)
+        return true;
+    return Root().Available() && RunAsRoot("mv -f " + ShellQuote(from) + " " + ShellQuote(to));
+}
+
+std::string UsbAccess::CopyFile(const std::string &source, const std::string &destination,
+                                const std::function<void(std::uint64_t)> &onProgress)
+{
+    // Directly, with progress, when the app may read the source and write the destination's folder.
+    const std::string folder = fs::path(destination).parent_path().string();
+    std::FILE *in            = access(folder.c_str(), W_OK) == 0 ? std::fopen(source.c_str(), "rb") : nullptr;
+    if (in) {
+        std::FILE *out = std::fopen(destination.c_str(), "wb");
+        if (!out) {
+            std::fclose(in);
+            return "Could not create " + destination + ".";
+        }
+        std::vector<char> buffer(4u << 20);
+        std::uint64_t copied = 0;
+        bool ok              = true;
+        std::size_t length   = 0;
+        while ((length = std::fread(buffer.data(), 1, buffer.size(), in)) > 0) {
+            if (std::fwrite(buffer.data(), 1, length, out) != length) {
+                ok = false; // disk full or I/O error
+                break;
+            }
+            copied += length;
+            onProgress(copied);
+        }
+        ok = ok && !std::ferror(in) && std::fflush(out) == 0 && fsync(fileno(out)) == 0;
+        std::fclose(in);
+        std::fclose(out);
+        return ok ? std::string() : "The copy could not be written (is the destination full?).";
+    }
+
+    if (!Root().Available())
+        return "The app cannot read the disc image or write there, and has no root access.";
+    if (RunAsRoot("cp -f " + ShellQuote(source) + " " + ShellQuote(destination) + " && sync"))
+        return {};
+    return "Root could not copy the disc image there (is the destination full?).";
 }
 
 PackSource UsbAccess::ActivePackSource() const

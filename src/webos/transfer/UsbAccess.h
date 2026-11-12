@@ -14,12 +14,18 @@
  * launch, PlaceTexturePack() makes the game's texture_pack/ folder point
  * there (a symlink, or a root bind mount when the app cannot read the drive
  * itself).
+ *
+ * The disc image may live on a drive too, in "<drive>/Animal Crossing/rom".
+ * PlaceDiscImage() then puts it where the game looks, rom/ in the data
+ * folder, the same two ways (a symlink to the file, or a root bind mount of
+ * it over an empty file). A disc image stored in rom/ itself always wins.
  */
 #ifndef ACWEBOS_USB_ACCESS_H
 #define ACWEBOS_USB_ACCESS_H
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -47,6 +53,8 @@ struct UsbDrive {
     bool writable = false;       ///< The app can create files on it directly.
     bool packExists = false;     ///< "<drive>/Animal Crossing/texture_pack" exists.
     std::uint32_t packFiles = 0; ///< .dds files in the pack (counted when readable).
+    std::string discFile;        ///< Disc image in "<drive>/Animal Crossing/rom" (file name), if any.
+    std::uint64_t discBytes = 0; ///< Its size.
 };
 
 /** Where the game's texture_pack/ comes from for this session. */
@@ -57,11 +65,21 @@ enum class PackSource {
     UsbMount,  ///< Root bind mount of a USB folder the app cannot read on its own.
 };
 
+/** Where the disc image the game opens comes from for this session. */
+enum class DiscSource {
+    None,     ///< No disc image.
+    Internal, ///< A file in the data folder's rom/.
+    UsbLink,  ///< Symlink in rom/ to a file on a USB drive the app can read.
+    UsbMount, ///< Root bind mount in rom/ of a file the app cannot read on its own.
+};
+
 class UsbAccess
 {
 public:
     /** The pack folder on a drive, relative to its mount point. */
     static constexpr const char *kPackFolder = "Animal Crossing/texture_pack";
+    /** The disc image folder on a drive, relative to its mount point. */
+    static constexpr const char *kDiscFolder = "Animal Crossing/rom";
 
     /** Probes root access (once; it takes up to a few seconds). */
     void ProbeRoot();
@@ -106,6 +124,57 @@ public:
     std::string ActivePackPath() const;
 
     /**
+     * The disc image in "<drive>/Animal Crossing/rom" on the drive mounted at
+     * @p mountPoint: the file name (GAFE01.iso first, then the first .iso,
+     * .gcm or .ciso), read directly or with root. Empty when there is none.
+     * @param size Receives its size when not null.
+     */
+    std::string FindDriveDisc(const std::string &mountPoint, std::uint64_t *size = nullptr);
+
+    /**
+     * Puts the disc image where the game opens it (see the file comment):
+     * a file in the data folder's rom/ wins; otherwise the first drive with
+     * one is linked or bind-mounted into rom/ under the same name. Removes
+     * links and bind mounts in rom/ left from earlier sessions. Called at
+     * launch, and again when a disc arrives on a drive during setup.
+     * @param dataRoot Absolute data folder path.
+     */
+    void PlaceDiscImage(const std::string &dataRoot);
+
+    /**
+     * Removes the links and lazily unmounts the bind mounts in
+     * @p dataRoot/rom, so a file can replace them. A game that has the disc
+     * open keeps reading it.
+     */
+    void ReleaseDiscLinks(const std::string &dataRoot);
+
+    /** Where the disc image came from at the last PlaceDiscImage(), and the file it is. */
+    DiscSource ActiveDiscSource() const;
+    std::string ActiveDiscPath() const;
+
+    /**
+     * Creates @p relative (a folder path) on the drive mounted at
+     * @p mountPoint, directly or with root.
+     * @return Empty string on success, otherwise the reason.
+     */
+    std::string CreateDriveFolder(const std::string &mountPoint, const std::string &relative);
+
+    /** Removes the file at @p path, directly or with root. @return True if it is gone. */
+    bool RemoveFile(const std::string &path);
+
+    /** Renames @p from to @p to (same file system), directly or with root. @return True on success. */
+    bool RenameFile(const std::string &from, const std::string &to);
+
+    /**
+     * Copies @p source to @p destination (whose folder exists), directly with
+     * progress (@p onProgress receives the bytes copied), or with root when
+     * the app cannot read the source or write the destination.
+     * @return Empty string on success, otherwise the reason.
+     */
+    std::string CopyFile(const std::string &source, const std::string &destination,
+                         const std::function<void(std::uint64_t)> &onProgress);
+
+    /**
      * Runs @p command as root (sh -c). Requires Root().Available().
      * @return True if it exited successfully; @p output receives stdout.
      */
@@ -123,6 +192,10 @@ private:
     bool rootProbed_ = false;
     PackSource packSource_ = PackSource::None;
     std::string packPath_;
+    DiscSource discSource_ = DiscSource::None;
+    std::string discPath_;
+    /** Serialises PlaceDiscImage() and ReleaseDiscLinks() (launch, and the page's threads). */
+    std::mutex discMutex_;
 
     struct CountCache {
         std::string mountPoint;

@@ -45,6 +45,8 @@ extern "C" void webos_transfer_boot(void)
 
     g_usb->ProbeRoot();
     g_usb->PlaceTexturePack(g_storage->Root());
+    // A disc image kept on a USB drive is linked into rom/ before the game looks there.
+    g_usb->PlaceDiscImage(g_storage->Root());
 
     g_server = new acwebos::TransferServer(*g_storage, *g_usb, acwebos::LoadOrCreatePin(*g_storage), ACWEBOS_VERSION);
     if (g_server->Start())
@@ -82,6 +84,15 @@ extern "C" int webos_transfer_overlay_text(char *buffer, size_t size)
     else
         text += "Upload page: http://" + address + ":" + std::to_string(g_server->Port()) + "   PIN " + g_server->Pin();
     ++lines;
+
+    switch (g_usb->ActiveDiscSource()) {
+        case acwebos::DiscSource::UsbLink:
+        case acwebos::DiscSource::UsbMount: text += "\nDisc image: USB drive"; break;
+        case acwebos::DiscSource::Internal: text += "\nDisc image: TV storage"; break;
+        default: break;
+    }
+    if (g_usb->ActiveDiscSource() != acwebos::DiscSource::None)
+        ++lines;
 
     switch (g_usb->ActivePackSource()) {
         case acwebos::PackSource::UsbLink:

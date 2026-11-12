@@ -27,7 +27,7 @@ renderer path) for webOS, with a small webOS layer in `src/webos/`:
 | `webos_bc_decode.c` | Lets the texture pack loader use BC1/BC3/BC7 (DXT) packs on a GPU without them: reports the extensions and decodes those uploads to RGBA on the CPU |
 | `webos_gpu_profile.c` | Optional GPU timing mode for finding expensive draws (see Troubleshooting) |
 | `webos_overlay.c` | In-game panel with the upload page address, PIN and this project's link (remote key 1, controller LB) |
-| `transfer/` | The upload page server (cpp-httplib), setup screen, USB drive and root detection, texture pack placement; the page itself is `web/index.html`. Built as `lib/libacwebos_transfer.so` with its own private C++ runtime, because the game replaces the global `operator new` with its own heap allocator |
+| `transfer/` | The upload page server (cpp-httplib), setup screen, USB drive and root detection, disc image and texture pack placement; the page itself is `web/index.html`. Built as `lib/libacwebos_transfer.so` with its own private C++ runtime, because the game replaces the global `operator new` with its own heap allocator |
 | `webos_remote.c` | TV remote controls (below); Back opens the pause menu instead of closing the app |
 | `glad/gl.h` | Replaces the desktop GL loader: maps the few desktop-only GL calls to ES ones and routes shader calls and buffer swaps to the files above |
 | `webos_forced_decls.h`, `webos_bstring.c` | Reconcile the decomp's own libc declarations with the TV's glibc |
@@ -45,7 +45,7 @@ frame in about 16 ms at 1080p.
    `ares-install`.
 2. Start the app. Without a disc image it shows an address and a PIN: open
    the address on a phone or computer on the same network, enter the PIN and
-   upload an image of your own disc (US version, GAFE01; `.iso`, `.gcm` or
+   upload an image of your own disc, to the TV or a USB drive (US version, GAFE01; `.iso`, `.gcm` or
    `.ciso`). The game starts as soon as it arrives.
 
 ### The upload page
@@ -54,7 +54,13 @@ The page stays available while you play (port 47811; press **1** on the
 remote, or LB on a controller, to see the address and PIN). It only answers devices on your home
 network that send the PIN. It can:
 
-- replace the disc image;
+- upload the disc image to the TV storage or to a USB drive (into
+  `Animal Crossing/rom` on it), and move it between them later. Only one
+  copy is kept: uploading or moving removes the others. A disc image on a
+  USB drive is linked into the game's `rom/` folder at start-up (a link, or
+  a root bind mount when the app cannot read the drive itself); one on the
+  TV storage is used first. Changes made while the game runs take effect at
+  the next start;
 - download and upload memory-card saves (`.gci`); uploads made while the game
   runs are applied at the next start;
 - show whether the app has **root** (running as root, or root commands through

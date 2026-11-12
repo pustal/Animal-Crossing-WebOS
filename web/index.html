@@ -65,9 +65,17 @@
 
     <section>
       <h2>Disc image</h2>
-      <p class="dim">An image of your own Animal Crossing disc (US version, GAFE01): .iso, .gcm or .ciso. Trimmed images work too.</p>
+      <p class="dim">An image of your own Animal Crossing disc (US version, GAFE01): .iso, .gcm or .ciso. Trimmed images work too.
+        It can stay on a USB drive, in <code>Animal Crossing/rom</code>; one kept on the TV is used first, so only one copy is kept.</p>
+      <label for="disc-target">Upload to</label>
+      <select id="disc-target"></select>
       <label class="button" for="disc-file">Choose disc image</label>
       <input id="disc-file" type="file" accept=".iso,.gcm,.ciso">
+      <p id="disc-move-row" class="hidden">
+        <label for="disc-move-target">Move it to</label>
+        <select id="disc-move-target"></select>
+        <button id="disc-move" type="button">Move</button>
+      </p>
       <progress id="disc-progress" class="hidden" max="100" value="0"></progress>
       <p id="disc-message"></p>
     </section>
@@ -114,12 +122,14 @@
 'use strict';
 
 /**
- * @typedef {{ present: boolean, file: string, size: number, gameId: string }} DiscState
+ * @typedef {{ present: boolean, file: string, size: number, gameId: string, location: 'none'|'internal'|'usb',
+ *             drive: string, source: 'none'|'internal'|'usb'|'usb-mount', folder: string }} DiscState
  * @typedef {{ active: boolean, received: number, expected: number }} UploadState
  * @typedef {{ process: boolean, homebrewChannel: boolean, detail: string }} RootState
  * @typedef {{ source: 'none'|'internal'|'usb'|'usb-mount', path: string, folder: string }} PackState
  * @typedef {{ mount: string, label: string, spaceKnown: boolean, freeBytes: number, totalBytes: number,
- *             readable: boolean, writable: boolean, packExists: boolean, packFiles: number }} Drive
+ *             readable: boolean, writable: boolean, packExists: boolean, packFiles: number,
+ *             discFile: string, discBytes: number }} Drive
  * @typedef {{ version: string, mode: 'setup'|'game', freeBytes: number, safetyMarginBytes: number, disc: DiscState,
  *             restartPending: boolean, upload: UploadState, root: RootState, texturePack: PackState, drives: Drive[] }} Status
  * @typedef {{ card: 'a'|'b', name: string, size: number, mtime: number }} Save
@@ -229,7 +239,7 @@ async function refreshStatus() {
 
   const disc = status.disc;
   if (disc.present) {
-    say(byId('disc-line'), 'Disc image installed: ' + disc.file + ' (' + humanBytes(disc.size) + ')'
+    say(byId('disc-line'), 'Disc image installed ' + discPlace(status) + ': ' + disc.file + ' (' + humanBytes(disc.size) + ')'
       + (disc.gameId && disc.gameId !== 'GAFE01' ? '. Note: this port is made for the US version (GAFE01).' : '.'),
       disc.gameId && disc.gameId !== 'GAFE01' ? 'warn' : 'ok');
   } else {
@@ -239,7 +249,57 @@ async function refreshStatus() {
   byId('restart-line').classList.toggle('hidden', !status.restartPending);
 
   renderRootAndDrives(status);
+  renderDiscTargets(status);
   renderPack(status);
+}
+
+/**
+ * Where the disc image is kept, for people: "on the TV" or "on USB sda1".
+ * @param {Status} status @returns {string}
+ */
+function discPlace(status) {
+  if (status.disc.location !== 'usb') return 'on the TV';
+  const drive = status.drives.find((candidate) => candidate.mount === status.disc.drive);
+  return 'on USB ' + (drive ? drive.label : status.disc.drive);
+}
+
+/**
+ * The places a disc image can go: the TV storage, then each drive the app
+ * (or root) can write to.
+ * @param {Status} status @returns {{ value: string, label: string, free: number }[]}
+ */
+function discTargets(status) {
+  const rootAvailable = status.root.process || status.root.homebrewChannel;
+  const targets = [{ value: 'internal', label: 'TV storage (' + humanBytes(status.freeBytes) + ' free)', free: status.freeBytes }];
+  for (const drive of status.drives) {
+    if ((drive.writable || rootAvailable) && drive.spaceKnown) {
+      targets.push({ value: drive.mount, label: 'USB ' + drive.label + ' / ' + status.disc.folder
+        + ' (' + humanBytes(drive.freeBytes) + ' free)', free: drive.freeBytes });
+    }
+  }
+  return targets;
+}
+
+/**
+ * Fills a select with @p targets, keeping its choice when it is still there.
+ * @param {HTMLSelectElement} select @param {{ value: string, label: string }[]} targets
+ */
+function fillTargets(select, targets) {
+  const previous = select.value;
+  select.replaceChildren(...targets.map((target) => new Option(target.label, target.value)));
+  if (targets.some((target) => target.value === previous)) select.value = previous;
+}
+
+/** @param {Status} status */
+function renderDiscTargets(status) {
+  const targets = discTargets(status);
+  fillTargets(/** @type {HTMLSelectElement} */ (byId('disc-target')), targets);
+
+  // Moving: anywhere but where the image is now.
+  const here = status.disc.location === 'usb' ? status.disc.drive : 'internal';
+  const elsewhere = status.disc.present ? targets.filter((target) => target.value !== here) : [];
+  fillTargets(/** @type {HTMLSelectElement} */ (byId('disc-move-target')), elsewhere);
+  byId('disc-move-row').classList.toggle('hidden', elsewhere.length === 0);
 }
 
 /** @param {Status} status */
@@ -256,7 +316,7 @@ function renderRootAndDrives(status) {
   if (status.drives.length === 0) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.textContent = 'No USB drive found. Plug one into the TV to keep a texture pack on it.';
+    cell.textContent = 'No USB drive found. Plug one into the TV to keep the disc image or a texture pack on it.';
     cell.className = 'dim note';
     row.append(cell);
     list.append(row);
@@ -277,6 +337,9 @@ function renderRootAndDrives(status) {
     const title = document.createElement('strong');
     title.textContent = 'USB ' + drive.label;
     info.append(title, document.createElement('br'), space + ' - ' + access + '.', document.createElement('br'), pack);
+    if (drive.discFile) {
+      info.append(document.createElement('br'), 'Disc image: ' + drive.discFile + ' (' + humanBytes(drive.discBytes) + ').');
+    }
 
     const action = document.createElement('td');
     if (!drive.packExists && (drive.writable || rootAvailable)) {
@@ -328,20 +391,22 @@ async function looksLikeDisc(file) {
 async function uploadDisc(file) {
   const message = byId('disc-message');
   const progress = /** @type {HTMLProgressElement} */ (byId('disc-progress'));
+  const targetValue = /** @type {HTMLSelectElement} */ (byId('disc-target')).value || 'internal';
   if (!(await looksLikeDisc(file))) {
     say(message, 'That file is not a GameCube disc image.', 'warn');
     return;
   }
-  if (lastStatus && file.size + lastStatus.safetyMarginBytes > lastStatus.freeBytes) {
-    say(message, 'Not enough space on the TV: needs ' + humanBytes(file.size + lastStatus.safetyMarginBytes)
-      + ', ' + humanBytes(lastStatus.freeBytes) + ' free.', 'warn');
+  const target = lastStatus ? discTargets(lastStatus).find((candidate) => candidate.value === targetValue) : undefined;
+  if (lastStatus && target && file.size + lastStatus.safetyMarginBytes > target.free) {
+    say(message, 'Not enough space ' + (targetValue === 'internal' ? 'on the TV' : 'on the USB drive') + ': needs '
+      + humanBytes(file.size + lastStatus.safetyMarginBytes) + ', ' + humanBytes(target.free) + ' free.', 'warn');
     return;
   }
   progress.classList.remove('hidden');
   progress.value = 0;
   say(message, 'Uploading ' + humanBytes(file.size) + '... keep this page open.');
   const started = performance.now();
-  const result = await putWithProgress('/api/disc', file, (fraction) => {
+  const result = await putWithProgress('/api/disc?drive=' + encodeURIComponent(targetValue), file, (fraction) => {
     progress.value = Math.floor(fraction * 100);
     const sent = fraction * file.size;
     const elapsed = (performance.now() - started) / 1000;
@@ -356,6 +421,50 @@ async function uploadDisc(file) {
       : 'Done! Quit and start the game again on the TV to use it.', 'ok');
   } else {
     say(message, result.text, 'warn');
+  }
+  await refreshStatus();
+}
+
+/**
+ * Moves the disc image to the place chosen in "Move it to", showing the TV's
+ * copy progress (the move is one request; the status reports the bytes copied).
+ */
+async function moveDisc() {
+  const message = byId('disc-message');
+  const progress = /** @type {HTMLProgressElement} */ (byId('disc-progress'));
+  const button = /** @type {HTMLButtonElement} */ (byId('disc-move'));
+  const targetValue = /** @type {HTMLSelectElement} */ (byId('disc-move-target')).value;
+  if (!targetValue) return;
+
+  button.disabled = true;
+  progress.classList.remove('hidden');
+  progress.value = 0;
+  say(message, 'Moving the disc image... keep this page open.');
+  const poll = setInterval(async () => {
+    try {
+      const response = await api('/api/status');
+      /** @type {Status} */
+      const status = await response.json();
+      if (status.upload.active && status.upload.expected > 0) {
+        progress.value = Math.floor(status.upload.received * 100 / status.upload.expected);
+        say(message, 'Moving: ' + humanBytes(status.upload.received) + ' of ' + humanBytes(status.upload.expected)
+          + '. Keep this page open.');
+      }
+    } catch (error) {
+      // A missed poll only delays the progress shown.
+    }
+  }, 1000);
+
+  try {
+    const response = await api('/api/disc/move?drive=' + encodeURIComponent(targetValue), { method: 'POST' });
+    const text = await response.text();
+    say(message, !response.ok ? text
+      : text === 'moved' ? 'Moved. The game is starting on the TV.'
+      : 'Moved. The game uses it from there the next time it starts.', response.ok ? 'ok' : 'warn');
+  } finally {
+    clearInterval(poll);
+    progress.classList.add('hidden');
+    button.disabled = false;
   }
   await refreshStatus();
 }
@@ -580,6 +689,10 @@ byId('disc-file').addEventListener('change', (event) => {
   const input = /** @type {HTMLInputElement} */ (event.target);
   if (input.files && input.files[0]) uploadDisc(input.files[0]).catch(() => undefined);
   input.value = '';
+});
+
+byId('disc-move').addEventListener('click', () => {
+  moveDisc().catch((error) => say(byId('disc-message'), String(error), 'warn'));
 });
 
 byId('save-files').addEventListener('change', (event) => {

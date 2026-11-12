@@ -1,6 +1,7 @@
 /**
  * @file TransferServer.h
- * @brief A small HTTP server for the browser upload page: the disc image,
+ * @brief A small HTTP server for the browser upload page: the disc image
+ *        (on the TV or a USB drive, and moving it between them),
  *        memory-card saves and texture pack files.
  *
  * Design notes for a TV:
@@ -94,7 +95,7 @@ private:
     std::thread thread_;
     std::atomic<std::uint16_t> port_{ 0 };
     std::atomic<bool> setupMode_{ true };
-    std::atomic<bool> discUploadInProgress_{ false };
+    std::atomic<bool> discBusy_{ false }; ///< A disc image upload or move is running.
 
     mutable std::mutex statusMutex_;
     TransferStatus status_;
